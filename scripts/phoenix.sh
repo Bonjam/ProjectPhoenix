@@ -9,6 +9,7 @@ source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"
 source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
+source "$PROJECT_ROOT/lib/backup.sh"
 
 case "$1" in
 
@@ -39,6 +40,11 @@ case "$1" in
         run_status
         ;;
 
+    backup)
+        show_banner
+        run_backup
+        ;;
+
     test-logging)
         show_banner
 
@@ -55,6 +61,7 @@ case "$1" in
 
         echo "Usage:"
         echo
+        echo "  phoenix.sh backup          Run backup"
         echo "  phoenix.sh banner          Show Project Phoenix banner"
         echo "  phoenix.sh check-config    Validate configuration"
         echo "  phoenix.sh inventory       Generate source inventory"
