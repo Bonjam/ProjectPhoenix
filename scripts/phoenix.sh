@@ -11,6 +11,8 @@ source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
 source "$PROJECT_ROOT/lib/backup.sh"
 source "$PROJECT_ROOT/lib/doctor.sh"
+source "$PROJECT_ROOT/lib/restore.sh"
+source "$PROJECT_ROOT/lib/report.sh"
 
 case "$1" in
 
@@ -51,6 +53,16 @@ case "$1" in
         run_doctor
         ;;
 
+    restore)
+        show_banner
+        run_restore
+        ;;
+
+    report)
+        show_banner
+        run_report
+        ;;
+
     test-logging)
         show_banner
 
@@ -72,6 +84,8 @@ case "$1" in
         echo "  phoenix.sh check-config    Validate configuration"
         echo "  phoenix.sh doctor          Run health diagnostics"
         echo "  phoenix.sh inventory       Generate source inventory"
+        echo "  phoenix.sh report          Generate text report"
+        echo "  phoenix.sh restore         Show restore assistant"
         echo "  phoenix.sh status          Show Project Phoenix status"
         echo "  phoenix.sh test-logging    Test the logging module"
         echo
