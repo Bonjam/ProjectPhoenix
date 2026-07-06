@@ -8,6 +8,7 @@ source "$PROJECT_ROOT/lib/banner.sh"
 source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"
 source "$PROJECT_ROOT/lib/validator.sh"
+source "$PROJECT_ROOT/lib/history.sh"
 source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
 source "$PROJECT_ROOT/lib/backup.sh"
@@ -26,9 +27,15 @@ case "$1" in
         validate_config
         ;;
 
+    history)
+        show_banner
+        show_history
+        ;;
+
     inventory)
         show_banner
         run_inventory
+        write_history_entry "inventory" "success" "Inventory generated"
         ;;
 
     status)
@@ -39,21 +46,25 @@ case "$1" in
     backup)
         show_banner
         run_backup
+        write_history_entry "backup" "started" "Backup framework executed"
         ;;
 
     doctor)
         show_banner
         run_doctor
+        write_history_entry "doctor" "completed" "Doctor diagnostics executed"
         ;;
 
     restore)
         show_banner
         run_restore
+        write_history_entry "restore" "preview" "Restore preview displayed"
         ;;
 
     report)
         show_banner
         run_report
+        write_history_entry "report" "success" "Text report generated"
         ;;
 
     test-logging)
@@ -73,6 +84,7 @@ case "$1" in
         echo "  phoenix.sh banner          Show Project Phoenix banner"
         echo "  phoenix.sh check-config    Validate configuration"
         echo "  phoenix.sh doctor          Run health diagnostics"
+        echo "  phoenix.sh history         Show Project Phoenix history"
         echo "  phoenix.sh inventory       Generate source inventory"
         echo "  phoenix.sh report          Generate text report"
         echo "  phoenix.sh restore         Show restore assistant"
