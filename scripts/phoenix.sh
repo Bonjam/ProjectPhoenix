@@ -3,6 +3,7 @@
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT" || exit 1
 
+source "$PROJECT_ROOT/lib/version.sh"
 source "$PROJECT_ROOT/lib/banner.sh"
 source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"

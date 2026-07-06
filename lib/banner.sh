@@ -1,8 +1,6 @@
 #!/bin/bash
 
 show_banner() {
-
-    source "$PROJECT_ROOT/lib/version.sh"
     get_version
 
     if [ -f "$PROJECT_ROOT/assets/ascii/phoenix.txt" ]; then
