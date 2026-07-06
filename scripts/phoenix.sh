@@ -7,6 +7,7 @@ source "$PROJECT_ROOT/lib/version.sh"
 source "$PROJECT_ROOT/lib/banner.sh"
 source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"
+source "$PROJECT_ROOT/lib/inventory.sh"
 
 case "$1" in
 
@@ -27,6 +28,11 @@ case "$1" in
         echo "Target  : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
         ;;
 
+    inventory)
+        show_banner
+        run_inventory
+        ;;
+
     test-logging)
         show_banner
 
@@ -45,6 +51,7 @@ case "$1" in
         echo
         echo "  phoenix.sh banner          Show Project Phoenix banner"
         echo "  phoenix.sh check-config    Validate configuration"
+        echo "  phoenix.sh inventory       Generate source inventory"
         echo "  phoenix.sh test-logging    Test the logging module"
         echo
         ;;
