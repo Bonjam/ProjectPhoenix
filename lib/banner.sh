@@ -1,8 +1,12 @@
 #!/bin/bash
 
 show_banner() {
-    if [ -f "assets/ascii/phoenix.txt" ]; then
-        cat "assets/ascii/phoenix.txt"
+
+    source "$PROJECT_ROOT/lib/version.sh"
+    get_version
+
+    if [ -f "$PROJECT_ROOT/assets/ascii/phoenix.txt" ]; then
+        cat "$PROJECT_ROOT/assets/ascii/phoenix.txt"
     else
         echo "PROJECT PHOENIX"
         echo "Rise. Recover. Restore."
@@ -13,5 +17,7 @@ show_banner() {
     echo "        PROJECT PHOENIX - Docker Disaster Recovery"
     echo "                Rise. Recover. Restore."
     echo "============================================================="
+    echo
+    echo "Version : $VERSION"
     echo
 }
