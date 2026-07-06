@@ -7,6 +7,7 @@ source "$PROJECT_ROOT/lib/version.sh"
 source "$PROJECT_ROOT/lib/banner.sh"
 source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"
+source "$PROJECT_ROOT/lib/validator.sh"
 source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
 source "$PROJECT_ROOT/lib/backup.sh"
@@ -22,15 +23,7 @@ case "$1" in
 
     check-config)
         show_banner
-        load_config
-
-        section "PROJECT PHOENIX CONFIGURATION"
-
-        log_success "Configuration loaded successfully."
-        echo
-        echo "Project : $PROJECT_NAME"
-        echo "Source  : $SOURCE"
-        echo "Target  : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
+        validate_config
         ;;
 
     inventory)
@@ -65,9 +58,7 @@ case "$1" in
 
     test-logging)
         show_banner
-
         section "PROJECT PHOENIX LOGGING TEST"
-
         log_info "Starting logging test"
         log_success "Everything is working"
         log_warning "Example warning"
@@ -76,7 +67,6 @@ case "$1" in
 
     *)
         show_banner
-
         echo "Usage:"
         echo
         echo "  phoenix.sh backup          Run backup"
