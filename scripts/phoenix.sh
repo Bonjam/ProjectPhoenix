@@ -5,22 +5,46 @@ cd "$PROJECT_ROOT" || exit 1
 
 source "$PROJECT_ROOT/lib/banner.sh"
 source "$PROJECT_ROOT/lib/config.sh"
+source "$PROJECT_ROOT/lib/logging.sh"
 
 case "$1" in
+
     banner)
         show_banner
         ;;
+
     check-config)
+        show_banner
         load_config
-        echo "Configuration loaded successfully."
-        echo "Project: $PROJECT_NAME"
-        echo "Source : $SOURCE"
-        echo "Target : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
+
+        section "PROJECT PHOENIX CONFIGURATION"
+
+        log_success "Configuration loaded successfully."
+        echo
+        echo "Project : $PROJECT_NAME"
+        echo "Source  : $SOURCE"
+        echo "Target  : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
         ;;
+
+    test-logging)
+        show_banner
+
+        section "PROJECT PHOENIX LOGGING TEST"
+
+        log_info "Starting logging test"
+        log_success "Everything is working"
+        log_warning "Example warning"
+        log_error "Example error"
+        ;;
+
     *)
         show_banner
+
         echo "Usage:"
-        echo "  phoenix.sh banner        Show Project Phoenix banner"
-        echo "  phoenix.sh check-config  Validate configuration"
+        echo
+        echo "  phoenix.sh banner          Show Project Phoenix banner"
+        echo "  phoenix.sh check-config    Validate configuration"
+        echo "  phoenix.sh test-logging    Test the logging module"
+        echo
         ;;
 esac
