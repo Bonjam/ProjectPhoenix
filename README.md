@@ -1,6 +1,14 @@
-# 🦅 Project Phoenix
+<p align="center">
+  <img src="assets/branding/phoenix-logo-v1.svg"
+       alt="Project Phoenix Logo"
+       width="220">
+</p>
 
-> **Rise. Recover. Restore.**
+<h1 align="center">Project Phoenix</h1>
+
+<p align="center">
+  <strong>Rise. Recover. Restore.</strong>
+</p>
 
 ![Version](https://img.shields.io/badge/version-v0.1.0--dev1-orange)
 ![Status](https://img.shields.io/badge/status-alpha-red)
