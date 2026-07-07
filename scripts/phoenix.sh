@@ -19,6 +19,7 @@ source "$PROJECT_ROOT/lib/restore.sh"
 source "$PROJECT_ROOT/lib/report.sh"
 source "$PROJECT_ROOT/lib/html-report.sh"
 source "$PROJECT_ROOT/lib/test.sh"
+source "$PROJECT_ROOT/lib/requirements.sh"
 
 case "$1" in
 
@@ -58,6 +59,11 @@ case "$1" in
         show_banner
         run_inventory
         write_history_entry "inventory" "success" "Inventory generated"
+        ;;
+
+    requirements)
+        show_banner
+        check_requirements
         ;;
 
     status)
@@ -117,6 +123,7 @@ case "$1" in
         echo "  phoenix.sh html-report     Generate static HTML health report"
         echo "  phoenix.sh inventory       Generate source inventory"
         echo "  phoenix.sh report          Generate text report"
+        echo "  phoenix.sh requirements    Check required system tools"
         echo "  phoenix.sh restore         Show restore assistant"
         echo "  phoenix.sh status          Show Project Phoenix status"
         echo "  phoenix.sh test            Run lightweight test suite"
