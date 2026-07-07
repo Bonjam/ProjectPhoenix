@@ -1,0 +1,44 @@
+# ==========================================
+# Project Phoenix
+# Git Ignore
+# ==========================================
+
+# Private configuration
+config.conf
+
+# SSH keys
+ssh/
+*.pem
+*.key
+id_ed25519
+id_ed25519.pub
+
+# Runtime files
+logs/
+status/
+history/
+reports/
+manifests/
+inventory/
+
+# Backup output
+*.log
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/settings.json
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Python cache (future-proofing)
+__pycache__/
+
+# Environment files
+.env
+.env.local
