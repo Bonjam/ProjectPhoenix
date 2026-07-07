@@ -23,6 +23,7 @@ status/
 history/
 reports/
 inventory/
+discovery/
 manifests/
 
 # Backup output
