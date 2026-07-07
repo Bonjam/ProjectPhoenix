@@ -1,10 +1,20 @@
 # 🦅 Project Phoenix
 
-**Rise. Recover. Restore.**
+> Rise. Recover. Restore.
 
-Project Phoenix is a lightweight disaster recovery toolkit for self-hosted Docker environments.
+Lightweight disaster recovery toolkit for Docker configuration backups using SSH and rsync.
 
 It is designed to help homelab users, NAS users, Raspberry Pi users, and self-hosters back up important Docker configuration folders to another machine using `rsync` over SSH.
+
+Status: Alpha
+
+Platform: Linux
+
+Language: Bash
+
+Transport: SSH + rsync
+
+License: MIT
 
 ## Goal
 
