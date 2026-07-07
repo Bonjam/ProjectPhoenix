@@ -1,62 +1,54 @@
 # 🦅 Project Phoenix
 
-> **Rise. Recover. Restore.**
+**Rise. Recover. Restore.**
 
-Project Phoenix is a disaster recovery toolkit designed to protect Docker environments by creating recoverable backups and providing confidence that those backups can be restored.
+Project Phoenix is a lightweight disaster recovery toolkit for self-hosted Docker environments.
 
----
+It is designed to help homelab users, NAS users, Raspberry Pi users, and self-hosters back up important Docker configuration folders to another machine using `rsync` over SSH.
 
-## Current Release
+## Goal
 
-**Version:** 1.1.0 — *Phoenix Rising*
+Project Phoenix is not trying to be a heavy enterprise backup platform.
 
-Status:
+Its goal is simple:
 
-- ✅ Production Ready
-- ✅ Weekly Automated Backups
-- ✅ SSH Key Authentication
-- ✅ Disaster Recovery Assistant
-- ✅ Health Reports
-- ✅ Doctor Diagnostics
-- ✅ Inventory Generation
+> Help you recover your Docker configs when something goes wrong.
 
----
+This is especially useful for services that take time to tune, such as:
 
-## Philosophy
+- Sonarr
+- Radarr
+- Sabnzbd
+- Jellystat
+- Homepage
+- Nginx Proxy Manager
+- WordPress
+- Portainer
+- Other Docker Compose stacks
 
-> A backup is only valuable if it can be restored.
+## Current Status
 
-Project Phoenix focuses on disaster recovery rather than simply copying files.
+Project Phoenix is currently early development software.
 
----
+The original production version is already protecting a real UGREEN NAS Docker folder, but this repository is being cleaned up into a reusable public project.
 
-## Repository Structure
+## Design Principles
+
+- Lightweight first
+- Bash based
+- Raspberry Pi friendly
+- No database required
+- No web server required
+- No telemetry
+- No cloud account required
+- Human-readable config, logs, and reports
+- Optional extras can be added later
+
+## Basic Architecture
 
 ```text
-ProjectPhoenix/
-├── assets/
-├── docs/
-├── examples/
-├── lib/
-├── restore/
-├── scripts/
-├── README.md
-├── CHANGELOG.md
-├── VERSION
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## Development
-
-Development is performed in this repository.
-
-Production deployments remain separate and contain the live configuration, SSH keys, logs and runtime data.
-
----
-
-## License
-
-Currently private.
+Docker host
+   |
+   | rsync over SSH
+   v
+Backup destination

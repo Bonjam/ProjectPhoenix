@@ -10,7 +10,13 @@ phoenix_init_core
 phoenix_init_dirs
 load_phoenix_modules
 
-case "$1" in
+COMMAND="$1"
+
+if [ -z "$COMMAND" ]; then
+    COMMAND="help"
+fi
+
+case "$COMMAND" in
 
     backup)
         show_banner
@@ -43,6 +49,11 @@ case "$1" in
         show_banner
         run_doctor
         write_history_entry "doctor" "completed" "Doctor diagnostics executed"
+        ;;
+
+    help|--help|-h)
+        show_banner
+        phoenix_print_usage
         ;;
 
     history)
@@ -103,14 +114,9 @@ case "$1" in
         log_error "Example error"
         ;;
 
-    ""|help|--help|-h)
-        show_banner
-        phoenix_print_usage
-        ;;
-
     *)
         show_banner
-        echo "Unknown command: $1"
+        echo "Unknown command: $COMMAND"
         echo
         phoenix_print_usage
         exit 1
