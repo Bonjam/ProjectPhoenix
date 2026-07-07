@@ -16,6 +16,7 @@ source "$PROJECT_ROOT/lib/backup.sh"
 source "$PROJECT_ROOT/lib/doctor.sh"
 source "$PROJECT_ROOT/lib/restore.sh"
 source "$PROJECT_ROOT/lib/report.sh"
+source "$PROJECT_ROOT/lib/html-report.sh"
 
 case "$1" in
 
@@ -37,6 +38,12 @@ case "$1" in
     history)
         show_banner
         show_history
+        ;;
+
+    html-report)
+        show_banner
+        generate_html_report
+        write_history_entry "html-report" "success" "HTML health report generated"
         ;;
 
     inventory)
@@ -93,6 +100,7 @@ case "$1" in
         echo "  phoenix.sh confidence      Show recovery confidence score"
         echo "  phoenix.sh doctor          Run health diagnostics"
         echo "  phoenix.sh history         Show Project Phoenix history"
+        echo "  phoenix.sh html-report     Generate static HTML health report"
         echo "  phoenix.sh inventory       Generate source inventory"
         echo "  phoenix.sh report          Generate text report"
         echo "  phoenix.sh restore         Show restore assistant"
