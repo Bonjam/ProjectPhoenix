@@ -56,6 +56,11 @@ case "$1" in
         write_history_entry "html-report" "success" "HTML health report generated"
         ;;
 
+    info)
+        show_banner
+        run_info
+        ;;
+
     inventory)
         show_banner
         run_inventory

@@ -44,5 +44,6 @@ phoenix_print_usage() {
     echo "  phoenix.sh status          Show Project Phoenix status"
     echo "  phoenix.sh test            Run lightweight test suite"
     echo "  phoenix.sh test-logging    Test the logging module"
+    echo "  phoenix.sh info            Show Project Phoenix core information"
     echo
 }
