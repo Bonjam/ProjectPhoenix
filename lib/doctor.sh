@@ -1,5 +1,65 @@
 #!/bin/bash
 
+doctor_check_file() {
+    local path="$1"
+    local pass_message="$2"
+    local fail_message="$3"
+
+    if [ -f "$path" ]; then
+        doctor_pass "$pass_message"
+    else
+        doctor_fail "$fail_message"
+    fi
+}
+
+doctor_check_file_warn() {
+    local path="$1"
+    local pass_message="$2"
+    local warn_message="$3"
+
+    if [ -f "$path" ]; then
+        doctor_pass "$pass_message"
+    else
+        doctor_warn "$warn_message"
+    fi
+}
+
+doctor_check_variable() {
+    local value="$1"
+    local pass_message="$2"
+    local fail_message="$3"
+
+    if [ -n "$value" ]; then
+        doctor_pass "$pass_message"
+    else
+        doctor_fail "$fail_message"
+    fi
+}
+
+doctor_check_variable_warn() {
+    local value="$1"
+    local pass_message="$2"
+    local warn_message="$3"
+
+    if [ -n "$value" ]; then
+        doctor_pass "$pass_message"
+    else
+        doctor_warn "$warn_message"
+    fi
+}
+
+doctor_check_command() {
+    local command_name="$1"
+    local pass_message="$2"
+    local fail_message="$3"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        doctor_pass "$pass_message"
+    else
+        doctor_fail "$fail_message"
+    fi
+}
+
 run_doctor() {
     get_version
 
@@ -31,25 +91,25 @@ run_doctor() {
 
     section "SYSTEM CHECKS"
 
-    [ -f "$PROJECT_ROOT/VERSION" ] && doctor_pass "VERSION file exists" || doctor_fail "VERSION file missing"
-    [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ] && doctor_pass "Launcher exists" || doctor_fail "Launcher missing"
-    [ -f "$PROJECT_ROOT/lib/core.sh" ] && doctor_pass "Core module exists" || doctor_fail "Core module missing"
-    [ -f "$PROJECT_ROOT/lib/module-loader.sh" ] && doctor_pass "Module loader exists" || doctor_fail "Module loader missing"
-    [ -f "$PROJECT_ROOT/lib/banner.sh" ] && doctor_pass "Banner module exists" || doctor_fail "Banner module missing"
-    [ -f "$PROJECT_ROOT/lib/config.sh" ] && doctor_pass "Config module exists" || doctor_fail "Config module missing"
-    [ -f "$PROJECT_ROOT/lib/logging.sh" ] && doctor_pass "Logging module exists" || doctor_fail "Logging module missing"
-    [ -f "$PROJECT_ROOT/lib/backup.sh" ] && doctor_pass "Backup module exists" || doctor_fail "Backup module missing"
-    [ -f "$PROJECT_ROOT/lib/restore.sh" ] && doctor_pass "Restore module exists" || doctor_fail "Restore module missing"
-    [ -f "$PROJECT_ROOT/lib/discovery.sh" ] && doctor_pass "Discovery module exists" || doctor_fail "Discovery module missing"
+    doctor_check_file "$PROJECT_ROOT/VERSION" "VERSION file exists" "VERSION file missing"
+    doctor_check_file "$PROJECT_ROOT/scripts/phoenix.sh" "Launcher exists" "Launcher missing"
+    doctor_check_file "$PROJECT_ROOT/lib/core.sh" "Core module exists" "Core module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/module-loader.sh" "Module loader exists" "Module loader missing"
+    doctor_check_file "$PROJECT_ROOT/lib/banner.sh" "Banner module exists" "Banner module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/config.sh" "Config module exists" "Config module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/logging.sh" "Logging module exists" "Logging module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/backup.sh" "Backup module exists" "Backup module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/restore.sh" "Restore module exists" "Restore module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/discovery.sh" "Discovery module exists" "Discovery module missing"
 
     echo
     section "DOCUMENTATION CHECKS"
 
-    [ -f "$PROJECT_ROOT/README.md" ] && doctor_pass "README exists" || doctor_fail "README missing"
-    [ -f "$PROJECT_ROOT/SECURITY.md" ] && doctor_pass "SECURITY guide exists" || doctor_warn "SECURITY guide missing"
-    [ -f "$PROJECT_ROOT/CONTRIBUTING.md" ] && doctor_pass "CONTRIBUTING guide exists" || doctor_warn "CONTRIBUTING guide missing"
-    [ -f "$PROJECT_ROOT/docs/INSTALL.md" ] && doctor_pass "INSTALL guide exists" || doctor_warn "INSTALL guide missing"
-    [ -f "$PROJECT_ROOT/docs/ROADMAP.md" ] && doctor_pass "ROADMAP exists" || doctor_warn "ROADMAP missing"
+    doctor_check_file "$PROJECT_ROOT/README.md" "README exists" "README missing"
+    doctor_check_file_warn "$PROJECT_ROOT/SECURITY.md" "SECURITY guide exists" "SECURITY guide missing"
+    doctor_check_file_warn "$PROJECT_ROOT/CONTRIBUTING.md" "CONTRIBUTING guide exists" "CONTRIBUTING guide missing"
+    doctor_check_file_warn "$PROJECT_ROOT/docs/INSTALL.md" "INSTALL guide exists" "INSTALL guide missing"
+    doctor_check_file_warn "$PROJECT_ROOT/docs/ROADMAP.md" "ROADMAP exists" "ROADMAP missing"
 
     echo
     section "CONFIGURATION CHECKS"
@@ -62,13 +122,13 @@ run_doctor() {
 
         doctor_pass "config.conf exists"
 
-        [ -n "${PROJECT_NAME:-}" ] && doctor_pass "PROJECT_NAME set" || doctor_fail "PROJECT_NAME missing"
-        [ -n "${SOURCE:-}" ] && doctor_pass "SOURCE set" || doctor_fail "SOURCE missing"
-        [ -n "${DESTINATION:-}" ] && doctor_pass "DESTINATION set" || doctor_fail "DESTINATION missing"
-        [ -n "${BACKUP_HOST:-}" ] && doctor_pass "BACKUP_HOST set" || doctor_fail "BACKUP_HOST missing"
-        [ -n "${BACKUP_USER:-}" ] && doctor_pass "BACKUP_USER set" || doctor_fail "BACKUP_USER missing"
-        [ -n "${SSH_KEY:-}" ] && doctor_pass "SSH_KEY set" || doctor_fail "SSH_KEY missing"
-        [ -n "${EXCLUDE_FILE:-}" ] && doctor_pass "EXCLUDE_FILE set" || doctor_warn "EXCLUDE_FILE missing"
+        doctor_check_variable "${PROJECT_NAME:-}" "PROJECT_NAME set" "PROJECT_NAME missing"
+        doctor_check_variable "${SOURCE:-}" "SOURCE set" "SOURCE missing"
+        doctor_check_variable "${DESTINATION:-}" "DESTINATION set" "DESTINATION missing"
+        doctor_check_variable "${BACKUP_HOST:-}" "BACKUP_HOST set" "BACKUP_HOST missing"
+        doctor_check_variable "${BACKUP_USER:-}" "BACKUP_USER set" "BACKUP_USER missing"
+        doctor_check_variable "${SSH_KEY:-}" "SSH_KEY set" "SSH_KEY missing"
+        doctor_check_variable_warn "${EXCLUDE_FILE:-}" "EXCLUDE_FILE set" "EXCLUDE_FILE missing"
 
         echo
         section "SOURCE CHECKS"
@@ -91,9 +151,9 @@ run_doctor() {
     echo
     section "REQUIREMENT CHECKS"
 
-    command -v bash >/dev/null 2>&1 && doctor_pass "bash found" || doctor_fail "bash missing"
-    command -v ssh >/dev/null 2>&1 && doctor_pass "ssh found" || doctor_fail "ssh missing"
-    command -v rsync >/dev/null 2>&1 && doctor_pass "rsync found" || doctor_fail "rsync missing"
+    doctor_check_command "bash" "bash found" "bash missing"
+    doctor_check_command "ssh" "ssh found" "ssh missing"
+    doctor_check_command "rsync" "rsync found" "rsync missing"
 
     if command -v docker >/dev/null 2>&1; then
         doctor_pass "docker found optional"

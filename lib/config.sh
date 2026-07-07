@@ -12,5 +12,6 @@ load_config() {
         exit 1
     fi
 
+    # shellcheck source=/dev/null
     source "$config_file"
 }

@@ -1,10 +1,16 @@
 #!/bin/bash
 
 phoenix_init_core() {
+    # shellcheck disable=SC2034
     PROJECT_NAME="Project Phoenix"
+
+    # shellcheck disable=SC2034
     PROJECT_TAGLINE="Rise. Recover. Restore."
+
+    # shellcheck disable=SC2034
     PROJECT_CODENAME="Wings of Recovery"
 
+    # shellcheck disable=SC2034
     VERSION_FILE="$PROJECT_ROOT/VERSION"
 
     LOG_DIR="$PROJECT_ROOT/logs"
@@ -17,13 +23,7 @@ phoenix_init_core() {
 }
 
 phoenix_init_dirs() {
-    mkdir -p "$LOG_DIR"
-    mkdir -p "$STATUS_DIR"
-    mkdir -p "$HISTORY_DIR"
-    mkdir -p "$REPORT_DIR"
-    mkdir -p "$MANIFEST_DIR"
-    mkdir -p "$INVENTORY_DIR"
-    mkdir -p "$DISCOVERY_DIR"
+    mkdir -p "$LOG_DIR" "$STATUS_DIR" "$HISTORY_DIR" "$REPORT_DIR" "$MANIFEST_DIR" "$INVENTORY_DIR" "$DISCOVERY_DIR"
 }
 
 phoenix_print_usage() {

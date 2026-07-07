@@ -16,14 +16,14 @@ run_tests() {
         TESTS_FAILED=$((TESTS_FAILED + 1))
     }
 
-    [ -f "$PROJECT_ROOT/VERSION" ] && test_pass "VERSION exists" || test_fail "VERSION missing"
-    [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ] && test_pass "Launcher exists" || test_fail "Launcher missing"
-    [ -f "$PROJECT_ROOT/lib/banner.sh" ] && test_pass "Banner module exists" || test_fail "Banner module missing"
-    [ -f "$PROJECT_ROOT/lib/config.sh" ] && test_pass "Config module exists" || test_fail "Config module missing"
-    [ -f "$PROJECT_ROOT/lib/logging.sh" ] && test_pass "Logging module exists" || test_fail "Logging module missing"
-    [ -f "$PROJECT_ROOT/lib/discovery.sh" ] && test_pass "Discovery module exists" || test_fail "Discovery module missing"
-    [ -f "$PROJECT_ROOT/lib/backup.sh" ] && test_pass "Backup module exists" || test_fail "Backup module missing"
-    [ -f "$PROJECT_ROOT/examples/config.example.conf" ] && test_pass "Example config exists" || test_fail "Example config missing"
+    if [ -f "$PROJECT_ROOT/VERSION" ]; then test_pass "VERSION exists"; else test_fail "VERSION missing"; fi
+    if [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ]; then test_pass "Launcher exists"; else test_fail "Launcher missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/banner.sh" ]; then test_pass "Banner module exists"; else test_fail "Banner module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/config.sh" ]; then test_pass "Config module exists"; else test_fail "Config module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/logging.sh" ]; then test_pass "Logging module exists"; else test_fail "Logging module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/backup.sh" ]; then test_pass "Backup module exists"; else test_fail "Backup module missing"; fi
+    if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     echo
     echo "Passed : $TESTS_PASSED"
