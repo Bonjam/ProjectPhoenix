@@ -10,6 +10,7 @@ source "$PROJECT_ROOT/lib/logging.sh"
 source "$PROJECT_ROOT/lib/validator.sh"
 source "$PROJECT_ROOT/lib/history.sh"
 source "$PROJECT_ROOT/lib/confidence.sh"
+source "$PROJECT_ROOT/lib/discovery.sh"
 source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
 source "$PROJECT_ROOT/lib/backup.sh"
@@ -33,6 +34,12 @@ case "$1" in
         show_banner
         calculate_confidence
         write_history_entry "confidence" "completed" "Recovery confidence calculated"
+        ;;
+
+    discovery)
+        show_banner
+        run_discovery
+        write_history_entry "discovery" "success" "Environment discovery completed"
         ;;
 
     history)
@@ -60,7 +67,7 @@ case "$1" in
     backup)
         show_banner
         run_backup
-        write_history_entry "backup" "started" "Backup framework executed"
+        write_history_entry "backup" "completed" "Backup engine executed"
         ;;
 
     doctor)
@@ -98,6 +105,7 @@ case "$1" in
         echo "  phoenix.sh banner          Show Project Phoenix banner"
         echo "  phoenix.sh check-config    Validate configuration"
         echo "  phoenix.sh confidence      Show recovery confidence score"
+        echo "  phoenix.sh discovery       Discover system and Docker environment"
         echo "  phoenix.sh doctor          Run health diagnostics"
         echo "  phoenix.sh history         Show Project Phoenix history"
         echo "  phoenix.sh html-report     Generate static HTML health report"
