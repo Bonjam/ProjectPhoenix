@@ -1,9 +1,6 @@
 #!/bin/bash
 
-run_backup() {
-    load_config
-    get_version
-
+create_backup_context() {
     TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
     LOG_DIR="$PROJECT_ROOT/logs"
@@ -11,18 +8,14 @@ run_backup() {
     MANIFEST_DIR="$PROJECT_ROOT/manifests"
     INVENTORY_DIR="$MANIFEST_DIR/inventory/$TIMESTAMP"
 
-    mkdir -p "$LOG_DIR" "$STATUS_DIR" "$MANIFEST_DIR" "$INVENTORY_DIR"
-
     LOGFILE="$LOG_DIR/$TIMESTAMP.log"
     MANIFEST="$MANIFEST_DIR/$TIMESTAMP.txt"
     LOCKFILE="/tmp/project_phoenix_backup.lock"
 
-    cleanup() {
-        rm -f "$LOCKFILE"
-    }
+    mkdir -p "$LOG_DIR" "$STATUS_DIR" "$MANIFEST_DIR" "$INVENTORY_DIR"
+}
 
-    trap cleanup EXIT
-
+acquire_backup_lock() {
     if [ -f "$LOCKFILE" ]; then
         echo "Another Project Phoenix backup appears to be running."
         exit 1
@@ -30,6 +23,10 @@ run_backup() {
 
     touch "$LOCKFILE"
 
+    trap 'rm -f "$LOCKFILE"' EXIT
+}
+
+write_backup_header() {
     section "PROJECT PHOENIX BACKUP"
 
     {
@@ -42,27 +39,35 @@ run_backup() {
         echo
         echo "-------------------------------------------------------------"
     } | tee "$LOGFILE"
+}
 
+verify_backup_ssh() {
     log_info "Testing SSH connection..."
 
     if ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=10 "${BACKUP_USER}@${BACKUP_HOST}" "echo OK" >>"$LOGFILE" 2>&1; then
         log_success "SSH Connection PASS"
-    else
-        log_error "SSH Connection FAIL"
-        date > "$STATUS_DIR/last_failure"
-        exit 1
+        return 0
     fi
 
+    log_error "SSH Connection FAIL"
+    date > "$STATUS_DIR/last_failure"
+    return 1
+}
+
+verify_backup_destination() {
     log_info "Checking destination..."
 
     if ssh -i "$SSH_KEY" "${BACKUP_USER}@${BACKUP_HOST}" "test -d '$DESTINATION'" >>"$LOGFILE" 2>&1; then
         log_success "Destination PASS"
-    else
-        log_error "Destination FAIL"
-        date > "$STATUS_DIR/last_failure"
-        exit 1
+        return 0
     fi
 
+    log_error "Destination FAIL"
+    date > "$STATUS_DIR/last_failure"
+    return 1
+}
+
+generate_backup_inventory() {
     log_info "Generating inventory..."
 
     {
@@ -92,7 +97,9 @@ run_backup() {
     du -sh "$SOURCE"/* > "$INVENTORY_DIR/source-folder-sizes.txt" 2>&1
 
     log_success "Inventory PASS"
+}
 
+run_rsync_backup() {
     log_info "Starting rsync..."
 
     START=$(date +%s)
@@ -110,10 +117,14 @@ run_backup() {
 
     END=$(date +%s)
     DURATION=$((END - START))
+}
 
+calculate_backup_stats() {
     BACKUP_SIZE=$(ssh -i "$SSH_KEY" "${BACKUP_USER}@${BACKUP_HOST}" "du -sh '$DESTINATION' | awk '{print \$1}'" 2>/dev/null || echo "unknown")
     SOURCE_SIZE=$(du -sh "$SOURCE" | awk '{print $1}')
+}
 
+write_backup_manifest() {
     {
         echo "Project Phoenix Backup Manifest"
         echo
@@ -127,7 +138,9 @@ run_backup() {
         echo "Backup Size: $BACKUP_SIZE"
         echo "Inventory: $INVENTORY_DIR"
     } > "$MANIFEST"
+}
 
+write_backup_health_report() {
     echo | tee -a "$LOGFILE"
     echo "=============================================================" | tee -a "$LOGFILE"
     echo "              PROJECT PHOENIX HEALTH REPORT" | tee -a "$LOGFILE"
@@ -161,6 +174,24 @@ run_backup() {
     echo "=============================================================" | tee -a "$LOGFILE"
     echo "                $OVERALL" | tee -a "$LOGFILE"
     echo "=============================================================" | tee -a "$LOGFILE"
+}
+
+run_backup() {
+    load_config
+    get_version
+
+    create_backup_context
+    acquire_backup_lock
+    write_backup_header
+
+    verify_backup_ssh || exit 1
+    verify_backup_destination || exit 1
+
+    generate_backup_inventory
+    run_rsync_backup
+    calculate_backup_stats
+    write_backup_manifest
+    write_backup_health_report
 
     return "$RSYNC_EXIT"
 }
