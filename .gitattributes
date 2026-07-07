@@ -1,0 +1,12 @@
+# Project Phoenix line ending rules
+
+*.sh text eol=lf
+*.conf text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg text eol=lf
