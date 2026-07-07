@@ -18,6 +18,7 @@ source "$PROJECT_ROOT/lib/doctor.sh"
 source "$PROJECT_ROOT/lib/restore.sh"
 source "$PROJECT_ROOT/lib/report.sh"
 source "$PROJECT_ROOT/lib/html-report.sh"
+source "$PROJECT_ROOT/lib/test.sh"
 
 case "$1" in
 
@@ -88,6 +89,11 @@ case "$1" in
         write_history_entry "report" "success" "Text report generated"
         ;;
 
+    test)
+        show_banner
+        run_tests
+        ;;
+
     test-logging)
         show_banner
         section "PROJECT PHOENIX LOGGING TEST"
@@ -113,6 +119,7 @@ case "$1" in
         echo "  phoenix.sh report          Generate text report"
         echo "  phoenix.sh restore         Show restore assistant"
         echo "  phoenix.sh status          Show Project Phoenix status"
+        echo "  phoenix.sh test            Run lightweight test suite"
         echo "  phoenix.sh test-logging    Test the logging module"
         echo
         ;;
