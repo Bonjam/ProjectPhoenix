@@ -9,6 +9,7 @@ source "$PROJECT_ROOT/lib/config.sh"
 source "$PROJECT_ROOT/lib/logging.sh"
 source "$PROJECT_ROOT/lib/validator.sh"
 source "$PROJECT_ROOT/lib/history.sh"
+source "$PROJECT_ROOT/lib/confidence.sh"
 source "$PROJECT_ROOT/lib/inventory.sh"
 source "$PROJECT_ROOT/lib/status.sh"
 source "$PROJECT_ROOT/lib/backup.sh"
@@ -25,6 +26,12 @@ case "$1" in
     check-config)
         show_banner
         validate_config
+        ;;
+
+    confidence)
+        show_banner
+        calculate_confidence
+        write_history_entry "confidence" "completed" "Recovery confidence calculated"
         ;;
 
     history)
@@ -83,6 +90,7 @@ case "$1" in
         echo "  phoenix.sh backup          Run backup"
         echo "  phoenix.sh banner          Show Project Phoenix banner"
         echo "  phoenix.sh check-config    Validate configuration"
+        echo "  phoenix.sh confidence      Show recovery confidence score"
         echo "  phoenix.sh doctor          Run health diagnostics"
         echo "  phoenix.sh history         Show Project Phoenix history"
         echo "  phoenix.sh inventory       Generate source inventory"
