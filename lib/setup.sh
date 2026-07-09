@@ -125,8 +125,42 @@ setup_ssh() {
     echo
     section "SSH"
 
-    read -rp "SSH key location [/home/$USER/.ssh/id_ed25519]: " SETUP_SSH_KEY
-    SETUP_SSH_KEY="${SETUP_SSH_KEY:-/home/$USER/.ssh/id_ed25519}"
+    read -rp "SSH key location [$HOME/.ssh/id_ed25519]: " SETUP_SSH_KEY
+    SETUP_SSH_KEY="${SETUP_SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+    if [ -f "$SETUP_SSH_KEY" ]; then
+        log_success "SSH key found: $SETUP_SSH_KEY"
+        return
+    fi
+
+    log_warning "SSH key not found: $SETUP_SSH_KEY"
+    echo
+
+    read -rp "Generate a new SSH key now? [Y/n]: " SETUP_GENERATE_KEY
+    SETUP_GENERATE_KEY="${SETUP_GENERATE_KEY:-Y}"
+
+    case "$SETUP_GENERATE_KEY" in
+        Y|y|YES|yes)
+            mkdir -p "$(dirname "$SETUP_SSH_KEY")"
+
+            ssh-keygen -t ed25519 -f "$SETUP_SSH_KEY" -N "" -C "project-phoenix" >/dev/null 2>&1
+
+            if [ -f "$SETUP_SSH_KEY" ]; then
+                log_success "SSH key generated: $SETUP_SSH_KEY"
+                echo
+                echo "Public key:"
+                echo
+                cat "${SETUP_SSH_KEY}.pub"
+                echo
+                echo "This public key must be added to the backup server's authorized_keys file."
+            else
+                log_error "Failed to generate SSH key"
+            fi
+            ;;
+        *)
+            log_warning "Skipping SSH key generation"
+            ;;
+    esac
 }
 
 setup_confirm() {
