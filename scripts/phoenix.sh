@@ -95,6 +95,12 @@ case "$COMMAND" in
         write_history_entry "restore" "preview" "Restore preview displayed"
         ;;
 
+    setup)
+        show_banner
+        setup_wizard
+        write_history_entry "setup" "started" "Interactive setup wizard launched"
+        ;;
+
     status)
         show_banner
         run_status
