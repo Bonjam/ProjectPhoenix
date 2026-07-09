@@ -7,6 +7,7 @@
 # Private configuration
 # --------------------------------------------------
 config.conf
+config.conf.backup.*
 
 # SSH Keys
 ssh/
@@ -21,10 +22,13 @@ id_ed25519.pub
 logs/
 status/
 history/
-reports/
 inventory/
 discovery/
 manifests/
+
+# Generated reports
+reports/
+*.html
 
 # Backup output
 *.log
@@ -41,9 +45,10 @@ dist/
 test-output/
 
 # --------------------------------------------------
-# VS Code
+# IDE
 # --------------------------------------------------
 .vscode/settings.json
+.idea/
 
 # --------------------------------------------------
 # Operating system files

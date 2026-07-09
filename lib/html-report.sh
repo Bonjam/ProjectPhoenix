@@ -281,6 +281,5 @@ $LOGO_SVG
 </body>
 </html>
 EOF
-
     log_success "HTML report generated: $REPORT_FILE"
 }
