@@ -46,10 +46,64 @@ setup_source() {
     SETUP_SOURCE_TYPE="${SETUP_SOURCE_TYPE:-1}"
 
     if [ "$SETUP_SOURCE_TYPE" = "1" ]; then
-        read -rp "Docker folder [/volume2/docker/]: " SETUP_SOURCE
-        SETUP_SOURCE="${SETUP_SOURCE:-/volume2/docker/}"
+        setup_detect_docker_source
     else
         read -rp "Source folder: " SETUP_SOURCE
+    fi
+}
+
+setup_detect_docker_source() {
+    local candidates=(
+        "/volume2/docker/"
+        "/volume1/docker/"
+        "/srv/docker/"
+        "/opt/docker/"
+        "/mnt/docker/"
+        "$HOME/docker/"
+    )
+
+    local found=()
+    local candidate
+    local index
+    local selection
+
+    echo
+    echo "Scanning for common Docker folders..."
+    echo
+
+    for candidate in "${candidates[@]}"; do
+        if [ -d "$candidate" ]; then
+            found+=("$candidate")
+        fi
+    done
+
+    if [ "${#found[@]}" -gt 0 ]; then
+        echo "Detected Docker folders:"
+        echo
+
+        index=1
+        for candidate in "${found[@]}"; do
+            echo "$index) $candidate"
+            index=$((index + 1))
+        done
+
+        echo "$index) Enter manually"
+        echo
+
+        read -rp "Selection [1]: " selection
+        selection="${selection:-1}"
+
+        if [ "$selection" -ge 1 ] 2>/dev/null && [ "$selection" -le "${#found[@]}" ]; then
+            SETUP_SOURCE="${found[$((selection - 1))]}"
+        else
+            read -rp "Docker folder [/volume2/docker/]: " SETUP_SOURCE
+            SETUP_SOURCE="${SETUP_SOURCE:-/volume2/docker/}"
+        fi
+    else
+        echo "No common Docker folder was detected."
+        echo
+        read -rp "Docker folder [/volume2/docker/]: " SETUP_SOURCE
+        SETUP_SOURCE="${SETUP_SOURCE:-/volume2/docker/}"
     fi
 }
 
@@ -86,6 +140,7 @@ setup_confirm() {
     echo "Destination  : $SETUP_DESTINATION"
     echo "SSH Key      : $SETUP_SSH_KEY"
     echo
+
     read -rp "Write config.conf with these settings? [Y/n]: " SETUP_CONFIRM
     SETUP_CONFIRM="${SETUP_CONFIRM:-Y}"
 
