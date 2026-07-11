@@ -1,5 +1,89 @@
 #!/bin/bash
 
+discovery_get_os_name() {
+    if [ -r /etc/os-release ]; then
+        (
+            # shellcheck disable=SC1091
+            . /etc/os-release
+            printf '%s\n' "${PRETTY_NAME:-${NAME:-Unknown Linux}}"
+        )
+    else
+        uname -a
+    fi
+}
+
+discovery_get_kernel() {
+    uname -r
+}
+
+discovery_get_architecture() {
+    uname -m
+}
+
+discovery_has_command() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+discovery_has_docker() {
+    discovery_has_command docker
+}
+
+discovery_has_docker_compose() {
+    discovery_get_docker_compose_version >/dev/null 2>&1
+}
+
+discovery_get_docker_compose_version() {
+    if discovery_has_docker && docker compose version >/dev/null 2>&1; then
+        docker compose version
+    elif discovery_has_command docker-compose; then
+        docker-compose --version
+    else
+        return 1
+    fi
+}
+
+discovery_find_ssh_keys() {
+    local ssh_dir="${1:-$HOME/.ssh}"
+
+    [ -d "$ssh_dir" ] || return 0
+
+    find "$ssh_dir" -maxdepth 1 -type f \
+        \( -name 'id_rsa' -o -name 'id_ecdsa' -o \
+           -name 'id_ed25519' -o -name 'id_dsa' \) \
+        2>/dev/null
+}
+
+discovery_find_common_docker_sources() {
+    local candidate
+
+    if [ "$#" -eq 0 ]; then
+        set -- "/srv/docker" "/opt/docker" "/home/$USER/docker" \
+            "/mnt/docker" "/volume1/docker" "/volume2/docker"
+    fi
+
+    for candidate in "$@"; do
+        if [ -d "$candidate" ]; then
+            printf '%s\n' "$candidate"
+        fi
+    done
+}
+
+discovery_get_storage_summary() {
+    df -h
+}
+
+discovery_get_memory_summary() {
+    free -h 2>/dev/null
+}
+
+discovery_get_cpu_summary() {
+    if ! discovery_has_command lscpu; then
+        return 1
+    fi
+
+    lscpu | grep -E "Model name|Architecture|CPU\(s\)" 2>/dev/null || true
+}
+
 run_discovery() {
     get_version
 
@@ -20,33 +104,29 @@ run_discovery() {
 
         echo "Operating System"
         echo "----------------"
-        if [ -f /etc/os-release ]; then
-            grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"'
-        else
-            uname -a
-        fi
+        discovery_get_os_name
         echo
 
         echo "Kernel"
         echo "------"
-        uname -r
+        discovery_get_kernel
         echo
 
         echo "Architecture"
         echo "------------"
-        uname -m
+        discovery_get_architecture
         echo
 
         echo "Core Tools"
         echo "----------"
-        command -v bash >/dev/null 2>&1 && echo "bash: found" || echo "bash: missing"
-        command -v ssh >/dev/null 2>&1 && echo "ssh: found" || echo "ssh: missing"
-        command -v rsync >/dev/null 2>&1 && echo "rsync: found" || echo "rsync: missing"
+        discovery_has_command bash && echo "bash: found" || echo "bash: missing"
+        discovery_has_command ssh && echo "ssh: found" || echo "ssh: missing"
+        discovery_has_command rsync && echo "rsync: found" || echo "rsync: missing"
         echo
 
         echo "Docker"
         echo "------"
-        if command -v docker >/dev/null 2>&1; then
+        if discovery_has_docker; then
             echo "Docker installed: yes"
             docker --version 2>/dev/null
             echo
@@ -73,13 +153,7 @@ run_discovery() {
 
         echo "Docker Compose"
         echo "--------------"
-        if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-            docker compose version
-        elif command -v docker-compose >/dev/null 2>&1; then
-            docker-compose --version
-        else
-            echo "Docker Compose installed: no"
-        fi
+        discovery_get_docker_compose_version || echo "Docker Compose installed: no"
         echo
 
         echo "Common Docker Folder Candidates"
@@ -112,21 +186,17 @@ run_discovery() {
 
         echo "Storage"
         echo "-------"
-        df -h
+        discovery_get_storage_summary
         echo
 
         echo "Memory"
         echo "------"
-        free -h 2>/dev/null || echo "Memory information unavailable"
+        discovery_get_memory_summary || echo "Memory information unavailable"
         echo
 
         echo "CPU"
         echo "---"
-        if command -v lscpu >/dev/null 2>&1; then
-            lscpu | grep -E "Model name|Architecture|CPU\(s\)" 2>/dev/null
-        else
-            echo "CPU information unavailable"
-        fi
+        discovery_get_cpu_summary || echo "CPU information unavailable"
         echo
 
         echo "Suggested Next Step"

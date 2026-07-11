@@ -1,6 +1,10 @@
 #!/bin/bash
 
 run_tests() {
+    local discovery_value
+    local test_docker_source
+    local test_temp_dir
+
     section "PROJECT PHOENIX TESTS"
 
     TESTS_PASSED=0
@@ -24,6 +28,42 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/backup.sh" ]; then test_pass "Backup module exists"; else test_fail "Backup module missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
+
+    discovery_value=$(discovery_get_os_name)
+    if [ -n "$discovery_value" ]; then test_pass "Discovery OS name available"; else test_fail "Discovery OS name missing"; fi
+
+    discovery_value=$(discovery_get_kernel)
+    if [ -n "$discovery_value" ]; then test_pass "Discovery kernel available"; else test_fail "Discovery kernel missing"; fi
+
+    discovery_value=$(discovery_get_architecture)
+    if [ -n "$discovery_value" ]; then test_pass "Discovery architecture available"; else test_fail "Discovery architecture missing"; fi
+
+    if discovery_has_command bash; then test_pass "Discovery finds bash"; else test_fail "Discovery cannot find bash"; fi
+
+    if discovery_has_command project-phoenix-command-that-does-not-exist; then
+        test_fail "Discovery reports nonexistent command"
+    else
+        test_pass "Discovery rejects nonexistent command"
+    fi
+
+    if test_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-test.XXXXXX"); then
+        test_docker_source="$test_temp_dir/docker source"
+        mkdir -p "$test_docker_source"
+
+        discovery_value=$(discovery_find_common_docker_sources \
+            "$test_temp_dir/not present" \
+            "$test_docker_source")
+
+        if [ "$discovery_value" = "$test_docker_source" ]; then
+            test_pass "Discovery accepts supplied Docker source candidates"
+        else
+            test_fail "Discovery rejects supplied Docker source candidates"
+        fi
+
+        rm -rf "$test_temp_dir"
+    else
+        test_fail "Unable to create temporary discovery test directory"
+    fi
 
     echo
     echo "Passed : $TESTS_PASSED"

@@ -53,7 +53,7 @@ doctor_check_command() {
     local pass_message="$2"
     local fail_message="$3"
 
-    if command -v "$command_name" >/dev/null 2>&1; then
+    if discovery_has_command "$command_name"; then
         doctor_pass "$pass_message"
     else
         doctor_fail "$fail_message"
@@ -155,7 +155,7 @@ run_doctor() {
     doctor_check_command "ssh" "ssh found" "ssh missing"
     doctor_check_command "rsync" "rsync found" "rsync missing"
 
-    if command -v docker >/dev/null 2>&1; then
+    if discovery_has_docker; then
         doctor_pass "docker found optional"
     else
         doctor_warn "docker not found optional"

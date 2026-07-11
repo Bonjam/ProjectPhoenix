@@ -131,11 +131,9 @@ setup_detect_docker_source() {
     echo "Scanning for common Docker folders..."
     echo
 
-    for candidate in "${candidates[@]}"; do
-        if [ -d "$candidate" ]; then
-            found+=("$candidate")
-        fi
-    done
+    while IFS= read -r candidate; do
+        found+=("$candidate")
+    done < <(discovery_find_common_docker_sources "${candidates[@]}")
 
     if [ "${#found[@]}" -eq 0 ]; then
         echo "No common Docker folder was detected."
@@ -370,7 +368,7 @@ setup_test_connection() {
     echo
     section "CONNECTION TEST"
 
-    if ! command -v ssh >/dev/null 2>&1; then
+    if ! discovery_has_command ssh; then
         log_warning "SSH client is not installed"
         echo
         echo "Install OpenSSH before running a backup."

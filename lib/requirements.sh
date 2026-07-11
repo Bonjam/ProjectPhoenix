@@ -9,7 +9,7 @@ check_requirements() {
     check_required_command() {
         local command_name="$1"
 
-        if command -v "$command_name" >/dev/null 2>&1; then
+        if discovery_has_command "$command_name"; then
             log_success "$command_name found"
             REQUIRED_OK=$((REQUIRED_OK + 1))
         else
@@ -21,7 +21,7 @@ check_requirements() {
     check_optional_command() {
         local command_name="$1"
 
-        if command -v "$command_name" >/dev/null 2>&1; then
+        if discovery_has_command "$command_name"; then
             log_success "$command_name found"
         else
             log_warning "$command_name not found optional"
