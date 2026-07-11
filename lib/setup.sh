@@ -256,7 +256,7 @@ setup_ssh() {
             ;;
     esac
 
-    if [ -f "$SETUP_SSH_KEY" ]; then
+    if ssh_key_exists "$SETUP_SSH_KEY"; then
         log_success "SSH key found: $SETUP_SSH_KEY"
         return
     fi
@@ -279,20 +279,7 @@ setup_ssh() {
 }
 
 setup_generate_ssh_key() {
-    if ! command -v ssh-keygen >/dev/null 2>&1; then
-        log_error "ssh-keygen is not installed"
-        return 1
-    fi
-
-    mkdir -p "$(dirname "$SETUP_SSH_KEY")"
-
-    if ssh-keygen \
-        -t ed25519 \
-        -f "$SETUP_SSH_KEY" \
-        -N "" \
-        -C "project-phoenix" \
-        >/dev/null 2>&1; then
-
+    if ssh_generate_key "$SETUP_SSH_KEY"; then
         log_success "SSH key generated: $SETUP_SSH_KEY"
         echo
         echo "Public key:"
@@ -390,7 +377,7 @@ setup_test_connection() {
         return
     fi
 
-    if [ ! -f "$SETUP_SSH_KEY" ]; then
+    if ! ssh_key_exists "$SETUP_SSH_KEY"; then
         log_warning "SSH connection test skipped because the key does not exist"
         echo
         echo "Expected SSH key:"
@@ -402,15 +389,10 @@ setup_test_connection() {
     echo "  ${SETUP_BACKUP_USER}@${SETUP_BACKUP_HOST}"
     echo
 
-    if ssh \
-        -i "$SETUP_SSH_KEY" \
-        -o BatchMode=yes \
-        -o ConnectTimeout=8 \
-        -o StrictHostKeyChecking=accept-new \
-        "${SETUP_BACKUP_USER}@${SETUP_BACKUP_HOST}" \
-        "printf '%s\n' PROJECT_PHOENIX_SSH_OK" \
-        2>/dev/null |
-        grep -q "PROJECT_PHOENIX_SSH_OK"; then
+    if ssh_test_connection \
+        "$SETUP_SSH_KEY" \
+        "$SETUP_BACKUP_USER" \
+        "$SETUP_BACKUP_HOST"; then
 
         SETUP_SSH_READY="yes"
         log_success "SSH connection successful"
@@ -434,22 +416,16 @@ setup_test_connection() {
 }
 
 setup_test_remote_destination() {
-    local remote_destination
-
     echo
     echo "Checking remote destination:"
     echo "  $SETUP_DESTINATION"
     echo
 
-    printf -v remote_destination '%q' "$SETUP_DESTINATION"
-
-    if ssh \
-        -i "$SETUP_SSH_KEY" \
-        -o BatchMode=yes \
-        -o ConnectTimeout=8 \
-        "${SETUP_BACKUP_USER}@${SETUP_BACKUP_HOST}" \
-        "test -d $remote_destination" \
-        >/dev/null 2>&1; then
+    if ssh_remote_destination_exists \
+        "$SETUP_SSH_KEY" \
+        "$SETUP_BACKUP_USER" \
+        "$SETUP_BACKUP_HOST" \
+        "$SETUP_DESTINATION"; then
 
         SETUP_DESTINATION_READY="yes"
         log_success "Remote destination exists"
