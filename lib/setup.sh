@@ -2,6 +2,7 @@
 
 setup_wizard() {
     setup_welcome
+    setup_system_analysis
     setup_project
     setup_source
     setup_destination
@@ -10,6 +11,60 @@ setup_wizard() {
     setup_write_config
     setup_test_connection
     setup_done
+}
+
+setup_system_analysis() {
+    local docker_sources=()
+    local discovered_path
+    local ssh_keys=()
+
+    section "SYSTEM ANALYSIS"
+    echo
+    printf 'Operating System : %s\n' "$(discovery_get_os_name)"
+    printf 'Kernel           : %s\n' "$(discovery_get_kernel)"
+    printf 'Architecture     : %s\n' "$(discovery_get_architecture)"
+    echo
+
+    echo "Required Tools"
+    if discovery_has_command bash; then log_success "bash found"; else log_warning "bash not found"; fi
+    if discovery_has_command ssh; then log_success "ssh found"; else log_warning "ssh not found"; fi
+    if discovery_has_command rsync; then log_success "rsync found"; else log_warning "rsync not found"; fi
+    echo
+
+    echo "Docker"
+    if discovery_has_docker; then log_success "Docker found"; else log_warning "Docker not found"; fi
+    if discovery_has_docker_compose; then log_success "Docker Compose found"; else log_warning "Docker Compose not found"; fi
+    echo
+
+    while IFS= read -r discovered_path; do
+        ssh_keys+=("$discovered_path")
+    done < <(discovery_find_ssh_keys)
+
+    echo "SSH Keys"
+    if [ "${#ssh_keys[@]}" -eq 0 ]; then
+        log_warning "No common SSH private keys found"
+    else
+        for discovered_path in "${ssh_keys[@]}"; do
+            log_success "Found: $discovered_path"
+        done
+    fi
+    echo
+
+    while IFS= read -r discovered_path; do
+        docker_sources+=("$discovered_path")
+    done < <(discovery_find_common_docker_sources)
+
+    echo "Docker Sources"
+    if [ "${#docker_sources[@]}" -eq 0 ]; then
+        log_warning "No common Docker source folders found"
+    else
+        for discovered_path in "${docker_sources[@]}"; do
+            log_success "Found: $discovered_path"
+        done
+    fi
+
+    echo
+    echo "Continue with setup..."
 }
 
 setup_welcome() {

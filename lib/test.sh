@@ -3,6 +3,8 @@
 run_tests() {
     local discovery_value
     local test_docker_source
+    local test_ssh_dir
+    local test_ssh_key
     local test_temp_dir
 
     section "PROJECT PHOENIX TESTS"
@@ -46,9 +48,19 @@ run_tests() {
         test_pass "Discovery rejects nonexistent command"
     fi
 
+    if declare -F setup_system_analysis >/dev/null 2>&1; then
+        test_pass "Setup system analysis available"
+    else
+        test_fail "Setup system analysis missing"
+    fi
+
     if test_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-test.XXXXXX"); then
         test_docker_source="$test_temp_dir/docker source"
+        test_ssh_dir="$test_temp_dir/ssh"
+        test_ssh_key="$test_ssh_dir/id_ed25519"
         mkdir -p "$test_docker_source"
+        mkdir -p "$test_ssh_dir"
+        touch "$test_ssh_key"
 
         discovery_value=$(discovery_find_common_docker_sources \
             "$test_temp_dir/not present" \
@@ -58,6 +70,14 @@ run_tests() {
             test_pass "Discovery accepts supplied Docker source candidates"
         else
             test_fail "Discovery rejects supplied Docker source candidates"
+        fi
+
+        discovery_value=$(discovery_find_ssh_keys "$test_ssh_dir")
+
+        if [ "$discovery_value" = "$test_ssh_key" ]; then
+            test_pass "Discovery reports common SSH key paths"
+        else
+            test_fail "Discovery misses common SSH key paths"
         fi
 
         rm -rf "$test_temp_dir"
