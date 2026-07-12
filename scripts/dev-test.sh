@@ -63,6 +63,13 @@ run_command_test "test" "bash scripts/phoenix.sh test"
 run_command_test "doctor" "bash scripts/phoenix.sh doctor"
 run_command_test "discovery" "bash scripts/phoenix.sh discovery"
 
+if [ -f test-local/pi-integration.conf ]; then
+    run_command_test "Pi integration" "bash scripts/test-pi-integration.sh"
+else
+    echo
+    echo "[SKIP] Pi integration (private configuration not found)"
+fi
+
 echo
 echo "============================================================="
 echo "                       TEST SUMMARY"
