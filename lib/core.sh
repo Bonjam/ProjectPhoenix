@@ -33,6 +33,7 @@ phoenix_print_usage() {
     echo "  phoenix.sh backup         Run backup"
     echo "  phoenix.sh recover        Analyse backup recovery readiness"
     echo "  phoenix.sh restore        Show restore assistant"
+    echo "  phoenix.sh restore-dry-run Preview files that would be restored"
     echo
     echo "  phoenix.sh doctor         Run health diagnostics"
     echo "  phoenix.sh discovery      Discover system and Docker environment"

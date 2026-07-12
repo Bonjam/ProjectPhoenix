@@ -100,6 +100,11 @@ case "$COMMAND" in
         write_history_entry "restore" "preview" "Restore preview displayed"
         ;;
 
+    restore-dry-run)
+        show_banner
+        run_restore_dry_run
+        ;;
+
     setup)
         show_banner
         setup_wizard

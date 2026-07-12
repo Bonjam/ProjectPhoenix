@@ -10,6 +10,8 @@ run_tests() {
     local test_temp_dir
     local recovery_analysis
     local recovery_output
+    local restore_dry_run_command
+    local restore_stats_fixture
 
     section "PROJECT PHOENIX TESTS"
 
@@ -35,6 +37,7 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/lib/backup.sh" ]; then test_pass "Backup module exists"; else test_fail "Backup module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/recovery.sh" ]; then test_pass "Recovery module exists"; else test_fail "Recovery module missing"; fi
     if declare -F run_recovery >/dev/null 2>&1; then test_pass "Recovery command function exists"; else test_fail "Recovery command function missing"; fi
+    if declare -F run_restore_dry_run >/dev/null 2>&1; then test_pass "Restore dry-run command function exists"; else test_fail "Restore dry-run command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -121,6 +124,35 @@ run_tests() {
             test_pass "Recovery reports missing configuration clearly"
         else
             test_fail "Recovery missing configuration message is unclear"
+        fi
+
+        mkdir -p "$test_temp_dir/restore target"
+        if restore_local_target_accessible "$test_temp_dir/restore target" &&
+            ! restore_local_target_accessible "$test_temp_dir/missing restore target"; then
+            test_pass "Restore dry run validates local targets without creating them"
+        else
+            test_fail "Restore dry run local target validation is unsafe"
+        fi
+
+        restore_dry_run_command=$(restore_execute_dry_run \
+            echo "$test_temp_dir/mock key" test-user test-host \
+            "/remote/backup" "$test_temp_dir/restore target")
+        if grep -Fq -- "-avhn --stats" <<< "$restore_dry_run_command" &&
+            grep -Fq -- "StrictHostKeyChecking=accept-new" <<< "$restore_dry_run_command" &&
+            ! grep -Fq -- "--delete" <<< "$restore_dry_run_command"; then
+            test_pass "Restore dry run uses safe rsync options"
+        else
+            test_fail "Restore dry run options are unsafe"
+        fi
+
+        restore_stats_fixture="Number of files: 12 (reg: 8, dir: 4)
+Total transferred file size: 4,096 bytes"
+        restore_parse_rsync_stats "$restore_stats_fixture"
+        if [ "$RESTORE_DRY_RUN_FILE_COUNT" = "12" ] &&
+            [ "$RESTORE_DRY_RUN_TRANSFER_SIZE" = "4,096 bytes" ]; then
+            test_pass "Restore dry run parses rsync statistics"
+        else
+            test_fail "Restore dry run cannot parse rsync statistics"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
