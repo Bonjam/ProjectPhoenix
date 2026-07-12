@@ -72,6 +72,16 @@ case "$COMMAND" in
         run_info
         ;;
 
+    integrity-create)
+        show_banner
+        run_integrity_create
+        ;;
+
+    integrity-verify)
+        show_banner
+        run_integrity_verify "${2:-}"
+        ;;
+
     inventory)
         show_banner
         run_inventory

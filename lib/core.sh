@@ -30,6 +30,8 @@ phoenix_print_usage() {
     echo "Usage:"
     echo
     echo "  phoenix.sh setup          Interactive setup wizard"
+    echo "  phoenix.sh integrity-create Create a local integrity manifest"
+    echo "  phoenix.sh integrity-verify Verify SOURCE against a manifest"
     echo "  phoenix.sh backup         Run backup"
     echo "  phoenix.sh recover        Analyse backup recovery readiness"
     echo "  phoenix.sh restore        Show restore assistant"

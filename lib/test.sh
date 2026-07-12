@@ -17,6 +17,10 @@ run_tests() {
     local protected_target
     local test_project_root="$PROJECT_ROOT"
     local verification_status
+    local integrity_fixture
+    local integrity_manifest_one
+    local integrity_manifest_two
+    local integrity_scenario
 
     section "PROJECT PHOENIX TESTS"
 
@@ -45,6 +49,8 @@ run_tests() {
     if declare -F run_restore_dry_run >/dev/null 2>&1; then test_pass "Restore dry-run command function exists"; else test_fail "Restore dry-run command function missing"; fi
     if declare -F run_restore_confirm >/dev/null 2>&1; then test_pass "Restore-confirm command function exists"; else test_fail "Restore-confirm command function missing"; fi
     if declare -F run_verify_restore >/dev/null 2>&1; then test_pass "Verify-restore command function exists"; else test_fail "Verify-restore command function missing"; fi
+    if declare -F run_integrity_create >/dev/null 2>&1; then test_pass "Integrity-create command function exists"; else test_fail "Integrity-create command function missing"; fi
+    if declare -F run_integrity_verify >/dev/null 2>&1; then test_pass "Integrity-verify command function exists"; else test_fail "Integrity-verify command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -273,6 +279,55 @@ Total transferred file size: 4,096 bytes"
             test_pass "Restore verification passes complete fixtures"
         else
             test_fail "Restore verification status evaluation is incorrect"
+        fi
+
+        integrity_fixture="$test_temp_dir/integrity fixture"
+        integrity_manifest_one="$test_temp_dir/integrity-one.txt"
+        integrity_manifest_two="$test_temp_dir/integrity-two.txt"
+        mkdir -p "$integrity_fixture/folder with spaces"
+        printf "alpha\n" > "$integrity_fixture/folder with spaces/file one.txt"
+        printf "dash\n" > "$integrity_fixture/-leading-name"
+        ln -s "folder with spaces/file one.txt" "$integrity_fixture/link name"
+        integrity_generate_manifest "$integrity_fixture" "$integrity_manifest_one" "fixed-time"
+        integrity_generate_manifest "$integrity_fixture" "$integrity_manifest_two" "fixed-time"
+        if cmp -s "$integrity_manifest_one" "$integrity_manifest_two"; then
+            test_pass "Integrity manifests are deterministic"
+        else
+            test_fail "Integrity manifests are not deterministic"
+        fi
+        if integrity_compare_manifests "$integrity_manifest_one" "$integrity_manifest_two" &&
+            [ "${#INTEGRITY_MISSING_FILES[@]}" -eq 0 ] &&
+            [ "${#INTEGRITY_CHANGED_LINK_TARGETS[@]}" -eq 0 ]; then
+            test_pass "Matching integrity fixtures pass"
+        else
+            test_fail "Matching integrity fixtures fail"
+        fi
+
+        integrity_scenario="$test_temp_dir/integrity changed"
+        cp -a -- "$integrity_fixture" "$integrity_scenario"
+        printf "larger content\n" > "$integrity_scenario/-leading-name"
+        rm -f -- "$integrity_scenario/link name"
+        ln -s "different-target" "$integrity_scenario/link name"
+        rm -f -- "$integrity_scenario/folder with spaces/file one.txt"
+        printf "new\n" > "$integrity_scenario/unexpected file"
+        integrity_generate_manifest "$integrity_scenario" "$integrity_manifest_two" "fixed-time"
+        integrity_compare_manifests "$integrity_manifest_one" "$integrity_manifest_two"
+        if [ "${#INTEGRITY_MISSING_FILES[@]}" -eq 1 ] &&
+            [ "${#INTEGRITY_UNEXPECTED_FILES[@]}" -eq 1 ] &&
+            [ "${#INTEGRITY_CHANGED_SIZES[@]}" -eq 1 ] &&
+            [ "${#INTEGRITY_CHANGED_HASHES[@]}" -eq 1 ] &&
+            [ "${#INTEGRITY_CHANGED_LINK_TARGETS[@]}" -eq 1 ]; then
+            test_pass "Integrity verification detects file and link changes"
+        else
+            test_fail "Integrity verification misses file or link changes"
+        fi
+
+        printf "not a manifest\n" > "$test_temp_dir/malformed-integrity.txt"
+        if integrity_compare_manifests \
+            "$test_temp_dir/malformed-integrity.txt" "$integrity_manifest_one"; then
+            test_fail "Integrity verification accepts malformed manifests"
+        else
+            test_pass "Integrity verification rejects malformed manifests clearly"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
