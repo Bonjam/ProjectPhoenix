@@ -84,6 +84,11 @@ case "$COMMAND" in
         write_history_entry "report" "success" "Text report generated"
         ;;
 
+    recover)
+        show_banner
+        run_recovery
+        ;;
+
     requirements)
         show_banner
         check_requirements

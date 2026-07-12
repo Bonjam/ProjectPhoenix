@@ -8,6 +8,8 @@ run_tests() {
     local test_ssh_key
     local test_ssh_key_two
     local test_temp_dir
+    local recovery_analysis
+    local recovery_output
 
     section "PROJECT PHOENIX TESTS"
 
@@ -31,6 +33,8 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/lib/logging.sh" ]; then test_pass "Logging module exists"; else test_fail "Logging module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/backup.sh" ]; then test_pass "Backup module exists"; else test_fail "Backup module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/recovery.sh" ]; then test_pass "Recovery module exists"; else test_fail "Recovery module missing"; fi
+    if declare -F run_recovery >/dev/null 2>&1; then test_pass "Recovery command function exists"; else test_fail "Recovery command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -86,6 +90,38 @@ run_tests() {
         fi
 
         touch "$test_ssh_key_two"
+
+        mkdir -p "$test_temp_dir/recovery/service-one"
+        mkdir -p "$test_temp_dir/recovery/service-two"
+        mkdir -p "$test_temp_dir/recovery/inventory"
+        mkdir -p "$test_temp_dir/recovery/manifests"
+        mkdir -p "$test_temp_dir/recovery/restore"
+        touch "$test_temp_dir/recovery/service-one/compose.yml"
+        touch "$test_temp_dir/recovery/service-two/docker-compose.yaml"
+        touch "$test_temp_dir/recovery/restore/README.md"
+
+        recovery_analysis=$(recovery_analyse_local_directory "$test_temp_dir/recovery")
+        if recovery_parse_analysis "$recovery_analysis" &&
+            [ "$RECOVERY_TOP_LEVEL_ENTRIES" = "5" ] &&
+            [ "$RECOVERY_COMPOSE_FILES" = "2" ] &&
+            [ "${RECOVERY_COMPOSE_PROJECTS[*]}" = "service-one service-two" ] &&
+            [ "$RECOVERY_INVENTORY" = "found" ] &&
+            [ "$RECOVERY_MANIFEST" = "found" ] &&
+            [ "$RECOVERY_RESTORE_GUIDE" = "found" ]; then
+            test_pass "Recovery analysis parses local fixtures"
+        else
+            test_fail "Recovery analysis cannot parse local fixtures"
+        fi
+
+        if recovery_output=$(
+            (PROJECT_ROOT="$test_temp_dir/missing-config"; run_recovery) 2>&1
+        ); then
+            test_fail "Recovery accepts missing configuration"
+        elif grep -q "Missing config file" <<< "$recovery_output"; then
+            test_pass "Recovery reports missing configuration clearly"
+        else
+            test_fail "Recovery missing configuration message is unclear"
+        fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
         SETUP_DEFAULT_SOURCE=""

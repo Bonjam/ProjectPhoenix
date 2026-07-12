@@ -31,6 +31,7 @@ phoenix_print_usage() {
     echo
     echo "  phoenix.sh setup          Interactive setup wizard"
     echo "  phoenix.sh backup         Run backup"
+    echo "  phoenix.sh recover        Analyse backup recovery readiness"
     echo "  phoenix.sh restore        Show restore assistant"
     echo
     echo "  phoenix.sh doctor         Run health diagnostics"
