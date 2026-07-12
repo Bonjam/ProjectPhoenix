@@ -135,6 +135,11 @@ case "$COMMAND" in
         log_error "Example error"
         ;;
 
+    verify-restore)
+        show_banner
+        run_verify_restore
+        ;;
+
     *)
         show_banner
         echo "Unknown command: $COMMAND"

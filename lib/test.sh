@@ -16,6 +16,7 @@ run_tests() {
     local restore_gate_output
     local protected_target
     local test_project_root="$PROJECT_ROOT"
+    local verification_status
 
     section "PROJECT PHOENIX TESTS"
 
@@ -43,6 +44,7 @@ run_tests() {
     if declare -F run_recovery >/dev/null 2>&1; then test_pass "Recovery command function exists"; else test_fail "Recovery command function missing"; fi
     if declare -F run_restore_dry_run >/dev/null 2>&1; then test_pass "Restore dry-run command function exists"; else test_fail "Restore dry-run command function missing"; fi
     if declare -F run_restore_confirm >/dev/null 2>&1; then test_pass "Restore-confirm command function exists"; else test_fail "Restore-confirm command function missing"; fi
+    if declare -F run_verify_restore >/dev/null 2>&1; then test_pass "Verify-restore command function exists"; else test_fail "Verify-restore command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -208,6 +210,69 @@ Total transferred file size: 4,096 bytes"
             test_pass "Confirmed restore uses safe real rsync options"
         else
             test_fail "Confirmed restore rsync options are unsafe"
+        fi
+
+        ln -s "$test_temp_dir/recovery/missing-target" \
+            "$test_temp_dir/recovery/broken-link"
+        mkdir -p "$test_temp_dir/recovery/empty-service"
+        verification_analyse_source "$test_temp_dir/recovery"
+
+        if [ "$VERIFY_COMPOSE_FILES" = "2" ] &&
+            [ "${VERIFY_COMPOSE_PROJECTS[*]}" = "service-one service-two" ]; then
+            test_pass "Restore verification counts Compose fixtures"
+        else
+            test_fail "Restore verification Compose analysis is incorrect"
+        fi
+        if [ "$VERIFY_BROKEN_SYMLINKS" = "1" ]; then
+            test_pass "Restore verification detects broken symlinks"
+        else
+            test_fail "Restore verification misses broken symlinks"
+        fi
+        if [ "$VERIFY_EMPTY_TOP_LEVEL_DIRECTORIES" -ge 1 ]; then
+            test_pass "Restore verification detects empty top-level directories"
+        else
+            test_fail "Restore verification misses empty top-level directories"
+        fi
+
+        verification_compare_expected_services \
+            "$test_temp_dir/recovery" "service-one service-two"
+        if [ "$VERIFY_EXPECTED_FOUND" = "2" ] &&
+            [ "$VERIFY_EXPECTED_MISSING" = "0" ]; then
+            test_pass "Restore verification finds all expected services"
+        else
+            test_fail "Restore verification expected-service match is incorrect"
+        fi
+
+        verification_compare_expected_services \
+            "$test_temp_dir/recovery" "service-one missing-service"
+        if [ "$VERIFY_EXPECTED_FOUND" = "1" ] &&
+            [ "$VERIFY_EXPECTED_MISSING" = "1" ] &&
+            [ "${VERIFY_MISSING_SERVICES[*]}" = "missing-service" ]; then
+            test_pass "Restore verification detects missing expected services"
+        else
+            test_fail "Restore verification misses absent expected services"
+        fi
+
+        if [ "$(printf "first\nsecond\n" | verification_count_records)" = "2" ]; then
+            test_pass "Restore verification parses unreadable-item records"
+        else
+            test_fail "Restore verification unreadable-item parsing failed"
+        fi
+
+        VERIFY_EXPECTED_MISSING=0
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_EXPECTED_SKIPPED="no"
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_UNREADABLE_FILES=0
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_UNREADABLE_DIRECTORIES=0
+        VERIFY_BROKEN_SYMLINKS=0
+        VERIFY_EMPTY_TOP_LEVEL_DIRECTORIES=0
+        verification_status=$(verification_evaluate_status)
+        if [ "$verification_status" = "PASS" ]; then
+            test_pass "Restore verification passes complete fixtures"
+        else
+            test_fail "Restore verification status evaluation is incorrect"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.

@@ -35,6 +35,7 @@ phoenix_print_usage() {
     echo "  phoenix.sh restore        Show restore assistant"
     echo "  phoenix.sh restore-dry-run Preview files that would be restored"
     echo "  phoenix.sh restore-confirm Confirm and run a validated restore"
+    echo "  phoenix.sh verify-restore Verify restored files read-only"
     echo
     echo "  phoenix.sh doctor         Run health diagnostics"
     echo "  phoenix.sh discovery      Discover system and Docker environment"
