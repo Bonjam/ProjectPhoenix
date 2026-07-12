@@ -105,6 +105,11 @@ case "$COMMAND" in
         run_restore_dry_run
         ;;
 
+    restore-confirm)
+        show_banner
+        run_restore_confirm
+        ;;
+
     setup)
         show_banner
         setup_wizard

@@ -12,6 +12,10 @@ run_tests() {
     local recovery_output
     local restore_dry_run_command
     local restore_stats_fixture
+    local restore_confirm_command
+    local restore_gate_output
+    local protected_target
+    local test_project_root="$PROJECT_ROOT"
 
     section "PROJECT PHOENIX TESTS"
 
@@ -38,6 +42,7 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/lib/recovery.sh" ]; then test_pass "Recovery module exists"; else test_fail "Recovery module missing"; fi
     if declare -F run_recovery >/dev/null 2>&1; then test_pass "Recovery command function exists"; else test_fail "Recovery command function missing"; fi
     if declare -F run_restore_dry_run >/dev/null 2>&1; then test_pass "Restore dry-run command function exists"; else test_fail "Restore dry-run command function missing"; fi
+    if declare -F run_restore_confirm >/dev/null 2>&1; then test_pass "Restore-confirm command function exists"; else test_fail "Restore-confirm command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -153,6 +158,56 @@ Total transferred file size: 4,096 bytes"
             test_pass "Restore dry run parses rsync statistics"
         else
             test_fail "Restore dry run cannot parse rsync statistics"
+        fi
+
+        if restore_target_is_safe "$test_temp_dir/restore target/" "$test_project_root" &&
+            restore_target_is_safe "/tmp/project-phoenix-restore-test/" "$test_project_root"; then
+            test_pass "Confirmed restore accepts safe nested targets"
+        else
+            test_fail "Confirmed restore rejects safe nested targets"
+        fi
+
+        for protected_target in "" / /bin /boot /dev /etc /home /lib /lib64 \
+            /proc /root /run /sbin /sys /tmp /usr /var "$test_project_root/"
+        do
+            if restore_target_is_safe "$protected_target" "$test_project_root"; then
+                test_fail "Confirmed restore accepts a protected target"
+                protected_target="unsafe"
+                break
+            fi
+        done
+        if [ "$protected_target" != "unsafe" ]; then
+            test_pass "Confirmed restore rejects protected targets"
+        fi
+
+        if restore_confirmation_matches "RESTORE PROJECT PHOENIX" &&
+            ! restore_confirmation_matches "restore project phoenix" &&
+            ! restore_confirmation_matches ""; then
+            test_pass "Confirmed restore requires exact confirmation"
+        else
+            test_fail "Confirmed restore confirmation is not exact"
+        fi
+
+        if restore_gate_output=$(restore_execute_confirmed_if_ready \
+            1 "RESTORE PROJECT PHOENIX" echo mock-key mock-user mock-host \
+            /remote/backup "$test_temp_dir/restore target" 2>&1); then
+            test_fail "Confirmed restore runs after a failed dry run"
+        elif [ -z "$restore_gate_output" ]; then
+            test_pass "Dry-run failure prevents confirmed rsync"
+        else
+            test_fail "Dry-run failure gate produced unexpected output"
+        fi
+
+        restore_confirm_command=$(restore_execute_confirmed_if_ready \
+            0 "RESTORE PROJECT PHOENIX" echo mock-key mock-user mock-host \
+            /remote/backup "$test_temp_dir/restore target")
+        if grep -Fq -- "-avh --stats" <<< "$restore_confirm_command" &&
+            ! grep -Fq -- "-avhn" <<< "$restore_confirm_command" &&
+            ! grep -Fq -- "--delete" <<< "$restore_confirm_command" &&
+            ! grep -Fq -- "--remove-source-files" <<< "$restore_confirm_command"; then
+            test_pass "Confirmed restore uses safe real rsync options"
+        else
+            test_fail "Confirmed restore rsync options are unsafe"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
