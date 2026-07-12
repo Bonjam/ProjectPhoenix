@@ -15,3 +15,12 @@ load_config() {
     # shellcheck source=/dev/null
     source "$config_file"
 }
+
+load_config_if_exists() {
+    local config_file="${PROJECT_ROOT}/config.conf"
+
+    [ -f "$config_file" ] || return 1
+
+    # shellcheck source=/dev/null
+    source "$config_file"
+}

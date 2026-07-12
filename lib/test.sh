@@ -3,8 +3,10 @@
 run_tests() {
     local discovery_value
     local test_docker_source
+    local test_docker_source_two
     local test_ssh_dir
     local test_ssh_key
+    local test_ssh_key_two
     local test_temp_dir
 
     section "PROJECT PHOENIX TESTS"
@@ -56,9 +58,12 @@ run_tests() {
 
     if test_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-test.XXXXXX"); then
         test_docker_source="$test_temp_dir/docker source"
+        test_docker_source_two="$test_temp_dir/docker source two"
         test_ssh_dir="$test_temp_dir/ssh"
         test_ssh_key="$test_ssh_dir/id_ed25519"
+        test_ssh_key_two="$test_ssh_dir/id_rsa"
         mkdir -p "$test_docker_source"
+        mkdir -p "$test_docker_source_two"
         mkdir -p "$test_ssh_dir"
         touch "$test_ssh_key"
 
@@ -78,6 +83,46 @@ run_tests() {
             test_pass "Discovery reports common SSH key paths"
         else
             test_fail "Discovery misses common SSH key paths"
+        fi
+
+        touch "$test_ssh_key_two"
+
+        # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
+        SETUP_DEFAULT_SOURCE=""
+        SETUP_DISCOVERED_DOCKER_SOURCES=("$test_docker_source")
+        setup_detect_docker_source <<< "" >/dev/null
+        if [ "$SETUP_SOURCE" = "$test_docker_source" ]; then
+            test_pass "Setup defaults to one discovered Docker source"
+        else
+            test_fail "Setup ignores one discovered Docker source"
+        fi
+
+        # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
+        SETUP_DISCOVERED_DOCKER_SOURCES=("$test_docker_source" "$test_docker_source_two")
+        setup_detect_docker_source <<< "2" >/dev/null
+        if [ "$SETUP_SOURCE" = "$test_docker_source_two" ]; then
+            test_pass "Setup selects from multiple Docker sources"
+        else
+            test_fail "Setup cannot select multiple Docker sources"
+        fi
+
+        # shellcheck disable=SC2034 # Fixture consumed by setup_ssh.
+        SETUP_DEFAULT_SSH_KEY=""
+        SETUP_DISCOVERED_SSH_KEYS=("$test_ssh_key")
+        setup_ssh <<< "" >/dev/null
+        if [ "$SETUP_SSH_KEY" = "$test_ssh_key" ]; then
+            test_pass "Setup defaults to one discovered SSH key"
+        else
+            test_fail "Setup ignores one discovered SSH key"
+        fi
+
+        # shellcheck disable=SC2034 # Fixture consumed by setup_ssh.
+        SETUP_DISCOVERED_SSH_KEYS=("$test_ssh_key" "$test_ssh_key_two")
+        setup_ssh <<< "2" >/dev/null
+        if [ "$SETUP_SSH_KEY" = "$test_ssh_key_two" ]; then
+            test_pass "Setup selects from multiple SSH keys"
+        else
+            test_fail "Setup cannot select multiple SSH keys"
         fi
 
         rm -rf "$test_temp_dir"

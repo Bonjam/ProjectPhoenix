@@ -3,6 +3,7 @@
 setup_wizard() {
     setup_welcome
     setup_system_analysis
+    setup_load_defaults
     setup_project
     setup_source
     setup_destination
@@ -14,9 +15,10 @@ setup_wizard() {
 }
 
 setup_system_analysis() {
-    local docker_sources=()
     local discovered_path
-    local ssh_keys=()
+
+    SETUP_DISCOVERED_DOCKER_SOURCES=()
+    SETUP_DISCOVERED_SSH_KEYS=()
 
     section "SYSTEM ANALYSIS"
     echo
@@ -37,34 +39,59 @@ setup_system_analysis() {
     echo
 
     while IFS= read -r discovered_path; do
-        ssh_keys+=("$discovered_path")
+        SETUP_DISCOVERED_SSH_KEYS+=("$discovered_path")
     done < <(discovery_find_ssh_keys)
 
     echo "SSH Keys"
-    if [ "${#ssh_keys[@]}" -eq 0 ]; then
+    if [ "${#SETUP_DISCOVERED_SSH_KEYS[@]}" -eq 0 ]; then
         log_warning "No common SSH private keys found"
     else
-        for discovered_path in "${ssh_keys[@]}"; do
+        for discovered_path in "${SETUP_DISCOVERED_SSH_KEYS[@]}"; do
             log_success "Found: $discovered_path"
         done
     fi
     echo
 
     while IFS= read -r discovered_path; do
-        docker_sources+=("$discovered_path")
+        SETUP_DISCOVERED_DOCKER_SOURCES+=("$discovered_path")
     done < <(discovery_find_common_docker_sources)
 
     echo "Docker Sources"
-    if [ "${#docker_sources[@]}" -eq 0 ]; then
+    if [ "${#SETUP_DISCOVERED_DOCKER_SOURCES[@]}" -eq 0 ]; then
         log_warning "No common Docker source folders found"
     else
-        for discovered_path in "${docker_sources[@]}"; do
+        for discovered_path in "${SETUP_DISCOVERED_DOCKER_SOURCES[@]}"; do
             log_success "Found: $discovered_path"
         done
     fi
 
     echo
     echo "Continue with setup..."
+}
+
+setup_load_defaults() {
+    load_config_if_exists >/dev/null 2>&1 || true
+
+    SETUP_DEFAULT_PROJECT_NAME="${PROJECT_NAME:-Project Phoenix}"
+    SETUP_DEFAULT_SOURCE="${SOURCE:-}"
+    SETUP_DEFAULT_DESTINATION="${DESTINATION:-/mnt/backups/project-phoenix/}"
+    SETUP_DEFAULT_BACKUP_HOST="${BACKUP_HOST:-backup-server.local}"
+    SETUP_DEFAULT_BACKUP_USER="${BACKUP_USER:-backup}"
+    SETUP_DEFAULT_SSH_KEY="${SSH_KEY:-}"
+}
+
+setup_path_in_list() {
+    local expected_path="$1"
+    shift
+    local listed_path
+
+    for listed_path in "$@"; do
+        if [ "$listed_path" = "$expected_path" ]; then
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 setup_welcome() {
@@ -130,8 +157,8 @@ setup_project() {
     echo
     section "PROJECT"
 
-    read -rp "Project name [Project Phoenix]: " SETUP_PROJECT_NAME
-    SETUP_PROJECT_NAME="${SETUP_PROJECT_NAME:-Project Phoenix}"
+    read -rp "Project name [$SETUP_DEFAULT_PROJECT_NAME]: " SETUP_PROJECT_NAME
+    SETUP_PROJECT_NAME="${SETUP_PROJECT_NAME:-$SETUP_DEFAULT_PROJECT_NAME}"
 }
 
 setup_source() {
@@ -155,7 +182,9 @@ setup_source() {
                 ;;
 
             2)
-                SETUP_SOURCE=$(setup_prompt_absolute_path "Source folder")
+                SETUP_SOURCE=$(setup_prompt_absolute_path \
+                    "Source folder" \
+                    "$SETUP_DEFAULT_SOURCE")
                 break
                 ;;
 
@@ -167,15 +196,6 @@ setup_source() {
 }
 
 setup_detect_docker_source() {
-    local candidates=(
-        "/volume2/docker/"
-        "/volume1/docker/"
-        "/srv/docker/"
-        "/opt/docker/"
-        "/mnt/docker/"
-        "$HOME/docker/"
-    )
-
     local found=()
     local candidate
     local index
@@ -186,9 +206,15 @@ setup_detect_docker_source() {
     echo "Scanning for common Docker folders..."
     echo
 
-    while IFS= read -r candidate; do
-        found+=("$candidate")
-    done < <(discovery_find_common_docker_sources "${candidates[@]}")
+    if [ -n "$SETUP_DEFAULT_SOURCE" ]; then
+        found+=("$SETUP_DEFAULT_SOURCE")
+    fi
+
+    for candidate in "${SETUP_DISCOVERED_DOCKER_SOURCES[@]}"; do
+        if ! setup_path_in_list "$candidate" "${found[@]}"; then
+            found+=("$candidate")
+        fi
+    done
 
     if [ "${#found[@]}" -eq 0 ]; then
         echo "No common Docker folder was detected."
@@ -196,7 +222,7 @@ setup_detect_docker_source() {
 
         SETUP_SOURCE=$(setup_prompt_absolute_path \
             "Docker folder" \
-            "/volume2/docker/")
+            "${SETUP_DEFAULT_SOURCE:-/volume2/docker/}")
 
         return
     fi
@@ -231,7 +257,7 @@ setup_detect_docker_source() {
         if [ "$selection" = "$manual_option" ]; then
             SETUP_SOURCE=$(setup_prompt_absolute_path \
                 "Docker folder" \
-                "/volume2/docker/")
+                "${SETUP_DEFAULT_SOURCE:-/volume2/docker/}")
             return
         fi
 
@@ -248,15 +274,15 @@ setup_destination() {
 
     SETUP_DESTINATION=$(setup_prompt_absolute_path \
         "Destination path" \
-        "/mnt/backups/project-phoenix/")
+        "$SETUP_DEFAULT_DESTINATION")
 }
 
 setup_backup_host() {
     local value=""
 
     while true; do
-        read -rp "Backup host [backup-server.local]: " value
-        value="${value:-backup-server.local}"
+        read -rp "Backup host [$SETUP_DEFAULT_BACKUP_HOST]: " value
+        value="${value:-$SETUP_DEFAULT_BACKUP_HOST}"
 
         if [[ "$value" =~ ^[A-Za-z0-9._:-]+$ ]]; then
             SETUP_BACKUP_HOST="$value"
@@ -271,8 +297,8 @@ setup_backup_user() {
     local value=""
 
     while true; do
-        read -rp "Backup user [backup]: " value
-        value="${value:-backup}"
+        read -rp "Backup user [$SETUP_DEFAULT_BACKUP_USER]: " value
+        value="${value:-$SETUP_DEFAULT_BACKUP_USER}"
 
         if [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
             SETUP_BACKUP_USER="$value"
@@ -285,13 +311,66 @@ setup_backup_user() {
 
 setup_ssh() {
     local default_key="$HOME/.ssh/id_ed25519"
+    local discovered_key
     local entered_key=""
+    local index
+    local manual_option
+    local selection
+    local ssh_options=()
 
     echo
     section "SSH"
 
-    read -rp "SSH key location [$default_key]: " entered_key
-    entered_key="${entered_key:-$default_key}"
+    if [ -n "$SETUP_DEFAULT_SSH_KEY" ]; then
+        ssh_options+=("$SETUP_DEFAULT_SSH_KEY")
+    fi
+
+    for discovered_key in "${SETUP_DISCOVERED_SSH_KEYS[@]}"; do
+        if ! setup_path_in_list "$discovered_key" "${ssh_options[@]}"; then
+            ssh_options+=("$discovered_key")
+        fi
+    done
+
+    if [ "${#ssh_options[@]}" -eq 1 ]; then
+        default_key="${ssh_options[0]}"
+    elif [ "${#ssh_options[@]}" -gt 1 ]; then
+        echo "Available SSH keys:"
+        echo
+
+        index=1
+        for discovered_key in "${ssh_options[@]}"; do
+            echo "$index) $discovered_key"
+            index=$((index + 1))
+        done
+
+        manual_option="$index"
+        echo "$manual_option) Enter manually"
+        echo
+
+        while true; do
+            read -rp "Selection [1]: " selection
+            selection="${selection:-1}"
+
+            if [[ "$selection" =~ ^[0-9]+$ ]] &&
+                [ "$selection" -ge 1 ] &&
+                [ "$selection" -le "${#ssh_options[@]}" ]; then
+
+                entered_key="${ssh_options[$((selection - 1))]}"
+                break
+            fi
+
+            if [ "$selection" = "$manual_option" ]; then
+                break
+            fi
+
+            log_warning "Please select one of the listed options"
+        done
+    fi
+
+    if [ -z "$entered_key" ]; then
+        read -rp "SSH key location [$default_key]: " entered_key
+        entered_key="${entered_key:-$default_key}"
+    fi
 
     case "$entered_key" in
         \~/*)
