@@ -272,9 +272,17 @@ run_health() {
     fi
     health_resolve_thresholds
     retention_resolve_count "${INTEGRITY_RETENTION_COUNT:-}"
+    destination_select_history_file
+    destination_select_backup_manifest_directory
+    destination_select_integrity_remote_directory
 
     health_print_heading "Configuration"
     printf "%-22s: PASS\n" "Status"
+    printf "%-22s: %s\n" "Destination ID" "$DESTINATION_ID"
+    printf "%-22s: %s\n" "Destination Name" "$DESTINATION_NAME"
+    printf "%-22s: %s\n" "Transport" "$DESTINATION_TRANSPORT"
+    printf "%-22s: %s/{history,manifests,status,reports}/%s/...\n" \
+        "Local State Namespace" "$PROJECT_ROOT" "$DESTINATION_STATE_NAMESPACE"
     printf "%-22s: %s\n" "Source" "$SOURCE"
     printf "%-22s: %s\n" "Destination" "$DESTINATION"
     printf "%-22s: %s\n" "Backup Host" "$BACKUP_HOST"
@@ -311,7 +319,13 @@ run_health() {
         failures=$((failures + 1))
     fi
 
-    health_latest_backup_state "$HISTORY_DIR/history.log" "$MANIFEST_DIR"
+    health_latest_backup_state "$DESTINATION_SELECTED_HISTORY_FILE" \
+        "$DESTINATION_SELECTED_BACKUP_MANIFEST_DIR"
+    if [ "$DESTINATION_HISTORY_STATE_SOURCE" = "legacy" ] ||
+        [ "$DESTINATION_BACKUP_MANIFEST_STATE_SOURCE" = "legacy" ]; then
+        warnings=$((warnings + 1))
+        warning_messages+=("Using legacy default-destination backup state without combining namespaces.")
+    fi
     health_print_heading "Latest Backup"
     printf "%-22s: %s\n" "Status" "$HEALTH_BACKUP_STATUS"
     printf "%-22s: %s\n" "Timestamp" "$HEALTH_BACKUP_TIMESTAMP"
@@ -336,7 +350,11 @@ run_health() {
     if [ "${HEALTH_REMOTE_GUIDE:-no}" != "yes" ]; then warnings=$((warnings + 1)); warning_messages+=("Recovery guide metadata is missing."); fi
     if [ "${HEALTH_REMOTE_INVENTORY:-no}" != "yes" ]; then warnings=$((warnings + 1)); warning_messages+=("Inventory metadata is missing."); fi
 
-    health_local_integrity_state "$MANIFEST_DIR/integrity/remote" || failures=$((failures + 1))
+    if [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = "legacy" ]; then
+        warnings=$((warnings + 1))
+        warning_messages+=("Using legacy default-destination integrity state without combining namespaces.")
+    fi
+    health_local_integrity_state "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" || failures=$((failures + 1))
     health_print_heading "Integrity"
     printf "%-22s: %s\n" "Remote Newest" "${HEALTH_REMOTE_INTEGRITY_NEWEST:-none}"
     printf "%-22s: %s\n" "Remote latest.txt" "${HEALTH_REMOTE_LATEST_STATUS:-not available}"

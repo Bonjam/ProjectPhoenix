@@ -28,6 +28,19 @@ validate_config() {
     check_required "SSH_KEY" "${SSH_KEY:-}"
     check_required "BACKUP_DIR" "${BACKUP_DIR:-}"
 
+    if destination_id_valid "${DESTINATION_ID:-}"; then
+        log_success "DESTINATION_ID is valid"
+    else
+        log_error "DESTINATION_ID is invalid"
+        VALIDATION_FAILED=1
+    fi
+    if destination_transport_supported "${DESTINATION_TRANSPORT:-}"; then
+        log_success "DESTINATION_TRANSPORT is supported"
+    else
+        log_error "DESTINATION_TRANSPORT is unsupported"
+        VALIDATION_FAILED=1
+    fi
+
     echo
 
     if [ "$VALIDATION_FAILED" -eq 0 ]; then

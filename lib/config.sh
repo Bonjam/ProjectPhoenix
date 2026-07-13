@@ -14,6 +14,7 @@ load_config() {
 
     # shellcheck source=/dev/null
     source "$config_file"
+    destination_resolve_context || exit 1
 }
 
 load_config_if_exists() {
@@ -23,4 +24,5 @@ load_config_if_exists() {
 
     # shellcheck source=/dev/null
     source "$config_file"
+    destination_resolve_context
 }

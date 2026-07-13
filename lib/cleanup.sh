@@ -168,12 +168,12 @@ run_integrity_cleanup() {
     local_eligible=("${RETENTION_ELIGIBLE_FILES[@]}")
     integrity_cleanup_record "$log_file" "Eligible local generated: ${local_eligible[*]:-none}"
 
-    retention_analyse_directory "$MANIFEST_DIR/integrity/remote" "$RETENTION_COUNT" || {
+    retention_analyse_directory "$DESTINATION_INTEGRITY_REMOTE_DIR" "$RETENTION_COUNT" || {
         integrity_cleanup_record "$log_file" "Failure: copied remote analysis"
         integrity_cleanup_finish FAILED 1 "$log_file" failed "Copied remote analysis failed"
         return
     }
-    retention_report_area "Copied Remote References" "$MANIFEST_DIR/integrity/remote"
+    retention_report_area "Copied Remote References" "$DESTINATION_INTEGRITY_REMOTE_DIR"
     copied_eligible=("${RETENTION_ELIGIBLE_FILES[@]}")
     integrity_cleanup_record "$log_file" "Eligible copied remote: ${copied_eligible[*]:-none}"
 
@@ -231,8 +231,8 @@ run_integrity_cleanup() {
     fi
 
     if [ "${#copied_eligible[@]}" -ne 0 ]; then
-        area_bytes=$(retention_eligible_bytes "$MANIFEST_DIR/integrity/remote" "${copied_eligible[@]}") || area_bytes=0
-        if ! retention_delete_local_eligible "$MANIFEST_DIR/integrity/remote" "$RETENTION_COUNT" copied_eligible "$log_file"; then
+        area_bytes=$(retention_eligible_bytes "$DESTINATION_INTEGRITY_REMOTE_DIR" "${copied_eligible[@]}") || area_bytes=0
+        if ! retention_delete_local_eligible "$DESTINATION_INTEGRITY_REMOTE_DIR" "$RETENTION_COUNT" copied_eligible "$log_file"; then
             integrity_cleanup_record "$log_file" "Failure: copied remote set changed or validation failed"
             if [ "$any_removed" -eq 0 ] && [ "${RETENTION_REMOVED_COUNT:-0}" -eq 0 ]; then
                 integrity_cleanup_finish FAILED 1 "$log_file" failed "Copied remote cleanup failed before any deletion"

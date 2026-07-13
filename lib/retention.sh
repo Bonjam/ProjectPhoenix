@@ -267,8 +267,12 @@ run_integrity_retention() {
     retention_report_area "Local Generated Manifests" "$MANIFEST_DIR/integrity"
     retention_analysis_has_warning && retention_status="WARNING"
 
-    retention_analyse_directory "$MANIFEST_DIR/integrity/remote" "$RETENTION_COUNT" || return 1
-    retention_report_area "Copied Remote References" "$MANIFEST_DIR/integrity/remote"
+    destination_select_integrity_remote_directory
+    if [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = "legacy" ]; then
+        log_warning "Using legacy copied references for the default destination; state is not combined"
+    fi
+    retention_analyse_directory "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" "$RETENTION_COUNT" || return 1
+    retention_report_area "Copied Remote References" "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR"
     retention_analysis_has_warning && retention_status="WARNING"
 
     ssh_key_exists "$SSH_KEY" || { log_error "Configured SSH key file does not exist"; return 1; }

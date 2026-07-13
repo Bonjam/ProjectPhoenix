@@ -38,6 +38,8 @@ run_tests() {
     local inventory_source inventory_report
     local lock_path lock_token lock_result current_process_start signal_name
     local lock_cleanup_output backup_outcome_label
+    local destination_fixture_root destination_snapshot_before destination_snapshot_after
+    local destination_output destination_manifest_fixture
 
     section "PROJECT PHOENIX TESTS"
 
@@ -73,6 +75,8 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/VERSION" ]; then test_pass "VERSION exists"; else test_fail "VERSION missing"; fi
     if [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ]; then test_pass "Launcher exists"; else test_fail "Launcher missing"; fi
     if [ -f "$PROJECT_ROOT/lib/banner.sh" ]; then test_pass "Banner module exists"; else test_fail "Banner module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/destination.sh" ] && declare -F destination_resolve_context >/dev/null 2>&1; then test_pass "Destination module is loaded"; else test_fail "Destination module is not loaded"; fi
+    if declare -F run_destination_info >/dev/null 2>&1 && declare -F run_destination_migration >/dev/null 2>&1; then test_pass "Destination inspection commands exist"; else test_fail "Destination inspection commands are missing"; fi
     if [ -f "$PROJECT_ROOT/lib/config.sh" ]; then test_pass "Config module exists"; else test_fail "Config module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/logging.sh" ]; then test_pass "Logging module exists"; else test_fail "Logging module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
@@ -126,6 +130,254 @@ run_tests() {
         mkdir -p "$test_docker_source_two"
         mkdir -p "$test_ssh_dir"
         touch "$test_ssh_key"
+
+        destination_fixture_root="$test_temp_dir/destination profile with spaces"
+        mkdir -p "$destination_fixture_root"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            unset DESTINATION_ID DESTINATION_NAME DESTINATION_TRANSPORT DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null &&
+                [ "$DESTINATION_ID" = default ] &&
+                [ "$DESTINATION_NAME" = "Default Destination" ] &&
+                [ "$DESTINATION_TRANSPORT" = ssh-rsync ] &&
+                [ "$DESTINATION_LEGACY_CONFIGURATION" = yes ]
+        ); then
+            test_pass "Legacy configuration resolves to the default destination profile"
+        else
+            test_fail "Legacy configuration destination defaults are incompatible"
+        fi
+
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null &&
+                [ "$DESTINATION_ID" = pi-usb ] &&
+                [ "$DESTINATION_NAME" = "Raspberry Pi USB" ] &&
+                [ "$DESTINATION_LEGACY_CONFIGURATION" = no ] &&
+                destination_path_beneath_project "$DESTINATION_HISTORY_DIR" "$PROJECT_ROOT" &&
+                destination_path_beneath_project "$DESTINATION_STATUS_DIR" "$PROJECT_ROOT" &&
+                destination_path_beneath_project "$DESTINATION_REPORT_DIR" "$PROJECT_ROOT" &&
+                destination_path_beneath_project "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" &&
+                destination_path_beneath_project "$DESTINATION_INTEGRITY_REMOTE_DIR" "$PROJECT_ROOT"
+        ); then
+            test_pass "Explicit destination profile and paths with spaces resolve safely"
+        else
+            test_fail "Explicit destination profile resolution failed"
+        fi
+
+        if destination_id_valid pi-usb && destination_id_valid windows-local &&
+            destination_id_valid google-drive && destination_id_valid backup2; then
+            test_pass "Valid destination IDs pass strict validation"
+        else
+            test_fail "Valid destination IDs are rejected"
+        fi
+        # shellcheck disable=SC2016 # Literal shell metacharacters are an invalid-ID fixture.
+        if ! destination_id_valid ../pi && ! destination_id_valid "Pi USB" &&
+            ! destination_id_valid pi/usb && ! destination_id_valid .pi &&
+            ! destination_id_valid pi_usb && ! destination_id_valid '$(command)' &&
+            ! destination_id_valid "$(printf 'a%.0s' {1..49})"; then
+            test_pass "Unsafe destination IDs fail strict validation"
+        else
+            test_fail "Unsafe destination IDs pass validation"
+        fi
+        if ! (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=remote-one
+            DESTINATION_NAME="Remote One"
+            DESTINATION_TRANSPORT=rclone
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null 2>&1
+        ); then
+            test_pass "Unknown destination transport fails clearly"
+        else
+            test_fail "Unknown destination transport is accepted"
+        fi
+
+        mkdir -p "$destination_fixture_root/manifests/integrity/remote"
+        printf "legacy\n" > "$destination_fixture_root/manifests/integrity/remote/latest.txt"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            destination_select_integrity_remote_directory
+            [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = namespaced ] &&
+                [ "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" = "$DESTINATION_INTEGRITY_REMOTE_DIR" ]
+        ); then
+            test_pass "Non-default destinations never read legacy integrity state"
+        else
+            test_fail "Non-default destination selected legacy integrity state"
+        fi
+
+        mkdir -p "$destination_fixture_root/manifests/destinations/default/integrity/remote"
+        printf "namespaced\n" > "$destination_fixture_root/manifests/destinations/default/integrity/remote/latest.txt"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            unset DESTINATION_ID DESTINATION_NAME DESTINATION_TRANSPORT DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            destination_select_integrity_remote_directory
+            [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = namespaced ] &&
+                grep -Fxq namespaced "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR/latest.txt" &&
+                ! grep -Fxq legacy "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR/latest.txt"
+        ); then
+            test_pass "Default destination prefers namespaced integrity state without merging"
+        else
+            test_fail "Default destination mixes legacy and namespaced integrity state"
+        fi
+        rm -rf -- "$destination_fixture_root/manifests/destinations/default"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            unset DESTINATION_ID DESTINATION_NAME DESTINATION_TRANSPORT DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            destination_select_integrity_remote_directory
+            [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = legacy ] &&
+                [ "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" = "$MANIFEST_DIR/integrity/remote" ]
+        ); then
+            test_pass "Default destination can detect legacy integrity references"
+        else
+            test_fail "Default destination cannot read compatible legacy integrity state"
+        fi
+
+        destination_manifest_fixture="$test_temp_dir/destination-reference.txt"
+        {
+            echo "# project-phoenix-integrity"
+            echo "# format_version=1"
+            echo "# reference_file=integrity-20260713-120000.txt"
+            echo "# regular_files=0"
+            echo "# symbolic_links=0"
+            echo "--"
+        } > "$destination_manifest_fixture"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            integrity_publish_downloaded_remote_reference "$destination_manifest_fixture" \
+                "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" &&
+                [ -f "$DESTINATION_INTEGRITY_REMOTE_DIR/latest.txt" ] &&
+                [ ! -e "$MANIFEST_DIR/integrity/remote/integrity-20260713-120000.txt" ]
+        ); then
+            test_pass "Integrity fetch publication uses the current destination namespace"
+        else
+            test_fail "Integrity fetch publication escaped its destination namespace"
+        fi
+
+        mkdir -p "$destination_fixture_root/manifests/destinations/second/integrity/remote"
+        sed 's/120000/120001/g' "$destination_manifest_fixture" > \
+            "$destination_fixture_root/manifests/destinations/second/integrity/remote/integrity-20260713-120001.txt"
+        cp -- "$destination_fixture_root/manifests/destinations/second/integrity/remote/integrity-20260713-120001.txt" \
+            "$destination_fixture_root/manifests/destinations/second/integrity/remote/latest.txt"
+        if (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            destination_select_integrity_remote_directory
+            RETENTION_COUNT=5 health_local_integrity_state \
+                "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" &&
+                [ "$HEALTH_LOCAL_REFERENCE" = integrity-20260713-120000.txt ]
+        ) && (
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=second
+            DESTINATION_NAME="Second"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            destination_select_integrity_remote_directory
+            RETENTION_COUNT=5 health_local_integrity_state \
+                "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" &&
+                [ "$HEALTH_LOCAL_REFERENCE" = integrity-20260713-120001.txt ]
+        ); then
+            test_pass "Health and integrity references remain isolated across two destinations"
+        else
+            test_fail "Health crossed destination integrity namespaces"
+        fi
+
+        destination_snapshot_before=$(find "$destination_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        destination_output=$(
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            BACKUP_HOST=fixture-host
+            # shellcheck disable=SC2034 # Fixture consumed indirectly by run_destination_info.
+            BACKUP_USER=fixture-user
+            DESTINATION="/fixture/path/"
+            unset DESTINATION_CONTEXT_RESOLVED
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_info
+        )
+        destination_snapshot_after=$(find "$destination_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        if [ "$destination_snapshot_before" = "$destination_snapshot_after" ] &&
+            grep -Fq "ID                    : pi-usb" <<< "$destination_output" &&
+            grep -Fq "No files were changed." <<< "$destination_output"; then
+            test_pass "Destination-info is strictly read-only"
+        else
+            test_fail "Destination-info changed fixture state or reported incorrectly"
+        fi
+
+        if (
+            PROJECT_ROOT="$destination_fixture_root/history metadata fixture"
+            mkdir -p "$PROJECT_ROOT"
+            phoenix_init_core
+            DESTINATION_ID=history-one
+            DESTINATION_NAME="History One"
+            DESTINATION_TRANSPORT=ssh-rsync
+            BACKUP_HOST=fixture-host
+            # shellcheck disable=SC2034 # Fixture consumed indirectly by write_history_entry.
+            BACKUP_USER=fixture-user
+            DESTINATION="/fixture/history/"
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context >/dev/null
+            write_history_entry test-action success "fixture completed" &&
+                grep -Fq "destination_id=history-one" "$DESTINATION_HISTORY_DIR/history.log" &&
+                grep -Fq "destination_name=History\\ One" "$DESTINATION_HISTORY_DIR/history.log" &&
+                grep -Fq "transport=ssh-rsync" "$DESTINATION_HISTORY_DIR/history.log" &&
+                [ ! -e "$HISTORY_DIR/history.log" ]
+        ); then
+            test_pass "New history entries include destination identity in isolated state"
+        else
+            test_fail "Destination history metadata or isolation is incomplete"
+        fi
+
+        mkdir -p "$destination_fixture_root/history/destinations/default"
+        printf "legacy history\n" > "$destination_fixture_root/history/history.log"
+        destination_snapshot_before=$(find "$destination_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        destination_output=$(
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            unset DESTINATION_ID DESTINATION_NAME DESTINATION_TRANSPORT DESTINATION_CONTEXT_RESOLVED
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migration
+        )
+        destination_snapshot_after=$(find "$destination_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        if [ "$destination_snapshot_before" = "$destination_snapshot_after" ] &&
+            grep -Fq "MIGRATION STATUS: CONFLICT" <<< "$destination_output"; then
+            test_pass "Destination-migration is read-only and detects conflicts"
+        else
+            test_fail "Destination-migration changed state or missed a conflict"
+        fi
 
         mkdir -p "$test_temp_dir/backup locks"
         lock_path="$test_temp_dir/backup locks/new.lock"

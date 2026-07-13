@@ -6,15 +6,15 @@ cd "$PROJECT_ROOT" || exit 1
 source "$PROJECT_ROOT/lib/core.sh"
 source "$PROJECT_ROOT/lib/module-loader.sh"
 
+COMMAND="${1:-help}"
+
 phoenix_init_core
-phoenix_init_dirs
+case "$COMMAND" in
+    help|--help|-h|check-config|destination-info|destination-migration|health) ;;
+    *) phoenix_init_dirs ;;
+esac
 load_phoenix_modules
 
-COMMAND="$1"
-
-if [ -z "$COMMAND" ]; then
-    COMMAND="help"
-fi
 
 case "$COMMAND" in
 
@@ -29,6 +29,16 @@ case "$COMMAND" in
             "${BACKUP_HISTORY_STATUS:-failed}" \
             "${BACKUP_HISTORY_DETAILS:-Backup engine stopped before completion}"
         exit "$backup_exit_code"
+        ;;
+
+    destination-info)
+        show_banner
+        run_destination_info
+        ;;
+
+    destination-migration)
+        show_banner
+        run_destination_migration
         ;;
 
     banner)

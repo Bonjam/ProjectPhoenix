@@ -43,6 +43,15 @@ Goal: make the project understandable, safe, and usable.
 - Tested install process
 - Lightweight release package
 
+## Phase 2 — Multi-Destination Resilience
+
+The destination-profile foundation introduces stable destination IDs and
+isolated local history, status, reports, and copied integrity references while
+preserving existing single-destination configurations as the `default`
+profile. The only supported transport in this milestone remains `ssh-rsync`.
+Windows/local, SMB, Google Drive, and rclone providers are planned follow-up
+work and are not implemented yet.
+
 ## Future Ideas
 
 - Docker container version

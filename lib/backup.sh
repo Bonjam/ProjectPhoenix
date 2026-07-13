@@ -4,16 +4,17 @@ create_backup_context() {
     TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
     LOG_DIR="$PROJECT_ROOT/logs"
-    STATUS_DIR="$PROJECT_ROOT/status"
-    MANIFEST_DIR="$PROJECT_ROOT/manifests"
-    INVENTORY_DIR="$MANIFEST_DIR/inventory/$TIMESTAMP"
+    STATUS_DIR="$DESTINATION_STATUS_DIR"
+    INVENTORY_DIR="$DESTINATION_MANIFEST_DIR/inventory/$TIMESTAMP"
 
     LOGFILE="$LOG_DIR/$TIMESTAMP.log"
-    MANIFEST="$MANIFEST_DIR/$TIMESTAMP.txt"
+    MANIFEST="$DESTINATION_MANIFEST_DIR/$TIMESTAMP.txt"
     # shellcheck disable=SC2034 # Consumed by the backup-lock module.
     LOCKFILE="/tmp/project_phoenix_backup.lock"
 
-    mkdir -p "$LOG_DIR" "$STATUS_DIR" "$MANIFEST_DIR" "$INVENTORY_DIR"
+    destination_prepare_directory "$STATUS_DIR" || return 1
+    destination_prepare_directory "$INVENTORY_DIR" || return 1
+    mkdir -p "$LOG_DIR"
 }
 
 
@@ -229,7 +230,11 @@ run_backup() {
     load_config
     get_version
 
-    create_backup_context
+    if ! create_backup_context; then
+        BACKUP_HISTORY_STATUS="failed"
+        BACKUP_HISTORY_DETAILS="Destination-local backup state could not be prepared safely"
+        return 1
+    fi
     if ! acquire_backup_lock; then
         BACKUP_HISTORY_STATUS="failed"
         BACKUP_HISTORY_DETAILS="Backup lock acquisition failed"

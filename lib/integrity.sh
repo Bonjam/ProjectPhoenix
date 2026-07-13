@@ -374,7 +374,8 @@ REMOTE_INTEGRITY
     reference_name=$(sed -n "s/^# reference_file=//p" "$local_manifest" | head -n 1)
     [ -n "$reference_name" ] || return 1
     integrity_load_manifest "$local_manifest" remote_file_sizes remote_file_hashes remote_links || return 1
-    if ! integrity_store_local_remote_reference "$local_manifest" "$reference_name"; then
+    if ! integrity_store_local_remote_reference "$local_manifest" "$reference_name" \
+        "$DESTINATION_MANIFEST_DIR"; then
         log_error "Local remote-reference publication failed"
         return 1
     fi
@@ -438,15 +439,23 @@ run_integrity_verify() {
 }
 
 run_integrity_verify_remote() {
-    run_integrity_verify "$MANIFEST_DIR/integrity/remote/latest.txt"
+    validate_config || return 1
+    destination_select_integrity_remote_directory
+    if [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = "legacy" ]; then
+        log_warning "Using the default destination's legacy integrity reference; namespaced and legacy references are not combined"
+    fi
+    run_integrity_verify "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR/latest.txt"
 }
 
 run_integrity_fetch_remote() {
     validate_config || return 1
     section "PROJECT PHOENIX REMOTE INTEGRITY FETCH"
-    phoenix_init_dirs
-    integrity_manifest_root_safe "$MANIFEST_DIR" "$PROJECT_ROOT" || {
+    integrity_manifest_root_safe "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" || {
         log_error "MANIFEST_DIR is empty, unsafe, or outside PROJECT_ROOT"
+        return 1
+    }
+    destination_prepare_directory "$DESTINATION_MANIFEST_DIR" || {
+        log_error "Unable to prepare the destination manifest namespace"
         return 1
     }
     ssh_key_exists "$SSH_KEY" || {
@@ -458,11 +467,11 @@ run_integrity_fetch_remote() {
         return 1
     }
     if ! integrity_fetch_with_downloader \
-        "$MANIFEST_DIR" "$PROJECT_ROOT" integrity_download_remote_reference; then
+        "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" integrity_download_remote_reference; then
         log_error "Integrity fetch failed during: ${INTEGRITY_FETCH_ERROR_STAGE:-unknown stage}"
         return 1
     fi
     log_success "Remote integrity reference fetched"
     echo "Reference: $INTEGRITY_FETCHED_REFERENCE_NAME"
-    echo "Latest   : $MANIFEST_DIR/integrity/remote/latest.txt"
+    echo "Latest   : $DESTINATION_INTEGRITY_REMOTE_DIR/latest.txt"
 }

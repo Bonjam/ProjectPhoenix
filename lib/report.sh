@@ -4,8 +4,8 @@ run_report() {
     load_config
     get_version
 
-    REPORT_DIR="$PROJECT_ROOT/reports"
-    mkdir -p "$REPORT_DIR"
+    REPORT_DIR="$DESTINATION_REPORT_DIR"
+    destination_prepare_directory "$REPORT_DIR" || return 1
 
     REPORT_FILE="$REPORT_DIR/latest-report.txt"
 

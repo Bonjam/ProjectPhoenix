@@ -4,11 +4,11 @@ generate_html_report() {
     load_config
     get_version
 
-    REPORT_DIR="$PROJECT_ROOT/reports"
+    REPORT_DIR="$DESTINATION_REPORT_DIR"
     REPORT_FILE="$REPORT_DIR/health-report.html"
     LOGO_FILE="$PROJECT_ROOT/assets/branding/phoenix-logo-v1.svg"
 
-    mkdir -p "$REPORT_DIR"
+    destination_prepare_directory "$REPORT_DIR" || return 1
 
     section "PROJECT PHOENIX HTML REPORT"
 

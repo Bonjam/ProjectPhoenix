@@ -242,6 +242,10 @@ cp examples/config.example.conf config.conf
 
 Example values:
 
+Project Phoenix gives each backup destination a stable local-state namespace.
+The three profile fields are optional: existing configurations that omit them
+continue to use `default`, `Default Destination`, and `ssh-rsync`.
+
 ```bash
 SOURCE="/srv/docker/"
 DESTINATION="/mnt/backups/docker-backup/"
@@ -249,7 +253,15 @@ BACKUP_HOST="backup-server.local"
 BACKUP_USER="backup-user"
 SSH_KEY="/opt/project-phoenix/ssh/id_ed25519"
 EXCLUDE_FILE="/opt/project-phoenix/exclude.txt"
+DESTINATION_ID="pi-usb"
+DESTINATION_NAME="Raspberry Pi USB"
+DESTINATION_TRANSPORT="ssh-rsync"
 ```
+
+Destination IDs may contain only lowercase letters, digits, and hyphens and
+must begin with a letter or digit. This Phase 2 foundation supports only
+`ssh-rsync`; Windows/local, SMB, Google Drive, and rclone providers are planned
+but are not implemented.
 
 Your real `config.conf` should never be committed to Git.
 
@@ -264,6 +276,8 @@ Your real `config.conf` should never be committed to Git.
 | `info`         | Show project and core information      |
 | `requirements` | Check required system tools            |
 | `test`         | Run lightweight internal tests         |
+| `destination-info` | Show the active destination profile without connecting |
+| `destination-migration` | Analyse legacy local state without changing it |
 | `doctor`       | Run health diagnostics                 |
 | `discovery`    | Discover system and Docker environment |
 | `check-config` | Validate configuration                 |
