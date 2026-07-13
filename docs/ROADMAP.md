@@ -52,6 +52,12 @@ profile. The only supported transport in this milestone remains `ssh-rsync`.
 Windows/local, SMB, Google Drive, and rclone providers are planned follow-up
 work and are not implemented yet.
 
+The first migration workflow supports a read-only legacy-state analysis and an
+explicitly confirmed, copy-first migration into one validated destination
+namespace. It retains legacy local state for rollback, requires the exact
+`MIGRATE LEGACY STATE TO <destination-id>` phrase, and does not change remote
+backup data. Destructive legacy cleanup is not part of this milestone.
+
 ## Future Ideas
 
 - Docker container version

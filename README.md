@@ -265,6 +265,20 @@ but are not implemented.
 
 Your real `config.conf` should never be committed to Git.
 
+### Legacy state migration
+
+`destination-migration` safely analyses existing local `history/`, copied
+remote-integrity references, `status/`, and `reports/` without changing them.
+After defining an explicit non-default destination profile, run
+`destination-migrate` to copy eligible files into that destination's local
+namespace. It stages, compares, and verifies each copy, leaves the legacy
+state intact for rollback, and never changes remote backup data.
+
+The confirmed command displays its analysis before asking for the exact phrase
+`MIGRATE LEGACY STATE TO <destination-id>`. A different response cancels the
+migration. Conflicts are never overwritten, and `config.conf` is never changed
+automatically.
+
 ---
 
 ## Commands
@@ -278,6 +292,7 @@ Your real `config.conf` should never be committed to Git.
 | `test`         | Run lightweight internal tests         |
 | `destination-info` | Show the active destination profile without connecting |
 | `destination-migration` | Analyse legacy local state without changing it |
+| `destination-migrate` | Confirm a copy-first local legacy-state migration |
 | `doctor`       | Run health diagnostics                 |
 | `discovery`    | Discover system and Docker environment |
 | `check-config` | Validate configuration                 |

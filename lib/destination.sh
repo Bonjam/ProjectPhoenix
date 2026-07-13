@@ -182,7 +182,11 @@ destination_legacy_integrity_present() {
 }
 
 run_destination_info() {
+    local state_status="empty"
     load_config || return 1
+    if destination_state_present; then
+        state_status="active"
+    fi
     section "PROJECT PHOENIX DESTINATION"
     printf "%-22s: %s\n" "ID" "$DESTINATION_ID"
     printf "%-22s: %s\n" "Name" "$DESTINATION_NAME"
@@ -191,45 +195,9 @@ run_destination_info() {
     printf "%-22s: %s\n" "User" "${BACKUP_USER:-not set}"
     printf "%-22s: %s\n" "Path" "${DESTINATION:-not set}"
     printf "%-22s: %s/...\n" "State Namespace" "$DESTINATION_STATE_NAMESPACE"
+    printf "%-22s: %s\n" "Namespaced State" "$state_status"
     printf "%-22s: %s\n" "Legacy Configuration" "$DESTINATION_LEGACY_CONFIGURATION"
     echo
     echo "No connection test was performed."
     echo "No files were changed."
-}
-
-run_destination_migration() {
-    local legacy_history="absent" legacy_integrity="absent" destination_state="absent"
-    local migration_status="NOTHING TO DO"
-
-    load_config || return 1
-    destination_legacy_history_present && legacy_history="present"
-    destination_legacy_integrity_present && legacy_integrity="present"
-    destination_state_present && destination_state="present"
-
-    if [ "$DESTINATION_ID" = "default" ] &&
-        { [ "$legacy_history" = "present" ] || [ "$legacy_integrity" = "present" ]; }; then
-        if [ "$destination_state" = "present" ]; then
-            migration_status="CONFLICT"
-        else
-            migration_status="AVAILABLE"
-        fi
-    fi
-
-    section "PROJECT PHOENIX DESTINATION MIGRATION ANALYSIS"
-    printf "%-30s: %s\n" "Destination ID" "$DESTINATION_ID"
-    printf "%-30s: %s\n" "Legacy History" "$legacy_history"
-    printf "%-30s: %s\n" "Legacy Integrity References" "$legacy_integrity"
-    printf "%-30s: %s\n" "Destination-specific State" "$destination_state"
-    printf "%-30s: %s\n" "History Source" "$HISTORY_DIR/history.log"
-    printf "%-30s: %s\n" "History Target" "$DESTINATION_HISTORY_DIR/history.log"
-    printf "%-30s: %s\n" "Integrity Source" "$MANIFEST_DIR/integrity/remote"
-    printf "%-30s: %s\n" "Integrity Target" "$DESTINATION_INTEGRITY_REMOTE_DIR"
-    if [ "$DESTINATION_ID" != "default" ] &&
-        { [ "$legacy_history" = "present" ] || [ "$legacy_integrity" = "present" ]; }; then
-        destination_warning "Legacy state is eligible only for the default destination and will not be used here"
-    fi
-    echo
-    echo "MIGRATION STATUS: $migration_status"
-    echo
-    echo "Read-only analysis only. No files were changed."
 }

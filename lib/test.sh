@@ -40,6 +40,7 @@ run_tests() {
     local lock_cleanup_output backup_outcome_label
     local destination_fixture_root destination_snapshot_before destination_snapshot_after
     local destination_output destination_manifest_fixture
+    local migration_fixture_root migration_output migration_result migration_marker
 
     section "PROJECT PHOENIX TESTS"
 
@@ -75,8 +76,9 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/VERSION" ]; then test_pass "VERSION exists"; else test_fail "VERSION missing"; fi
     if [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ]; then test_pass "Launcher exists"; else test_fail "Launcher missing"; fi
     if [ -f "$PROJECT_ROOT/lib/banner.sh" ]; then test_pass "Banner module exists"; else test_fail "Banner module missing"; fi
-    if [ -f "$PROJECT_ROOT/lib/destination.sh" ] && declare -F destination_resolve_context >/dev/null 2>&1; then test_pass "Destination module is loaded"; else test_fail "Destination module is not loaded"; fi
-    if declare -F run_destination_info >/dev/null 2>&1 && declare -F run_destination_migration >/dev/null 2>&1; then test_pass "Destination inspection commands exist"; else test_fail "Destination inspection commands are missing"; fi
+    if declare -F run_destination_info >/dev/null 2>&1 && \
+        declare -F run_destination_migration >/dev/null 2>&1 && \
+        declare -F run_destination_migrate >/dev/null 2>&1; then test_pass "Destination inspection and migration commands exist"; else test_fail "Destination inspection or migration commands are missing"; fi
     if [ -f "$PROJECT_ROOT/lib/config.sh" ]; then test_pass "Config module exists"; else test_fail "Config module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/logging.sh" ]; then test_pass "Logging module exists"; else test_fail "Logging module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
@@ -373,10 +375,270 @@ run_tests() {
         )
         destination_snapshot_after=$(find "$destination_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
         if [ "$destination_snapshot_before" = "$destination_snapshot_after" ] &&
-            grep -Fq "MIGRATION STATUS: CONFLICT" <<< "$destination_output"; then
-            test_pass "Destination-migration is read-only and detects conflicts"
+            grep -Fq "MIGRATION STATUS: PROFILE REQUIRED" <<< "$destination_output"; then
+            test_pass "Default profile migration analysis is read-only and requires an explicit profile"
         else
-            test_fail "Destination-migration changed state or missed a conflict"
+            test_fail "Default migration analysis changed state or allowed migration"
+        fi
+        migration_result=0
+        migration_output=$(
+            PROJECT_ROOT="$destination_fixture_root"
+            phoenix_init_core
+            unset DESTINATION_ID DESTINATION_NAME DESTINATION_TRANSPORT DESTINATION_CONTEXT_RESOLVED
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migrate <<< "MIGRATE LEGACY STATE TO default"
+        ) || migration_result=$?
+        if [ "$migration_result" -ne 0 ] &&
+            grep -Fq "DESTINATION_ID=pi-usb" <<< "$migration_output"; then
+            test_pass "Default profile refuses confirmed migration without editing config"
+        else
+            test_fail "Default profile accepted confirmed migration"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration no legacy with spaces"
+        mkdir -p "$migration_fixture_root"
+        migration_output=$(
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migrate </dev/null
+        )
+        if grep -Fq "MIGRATION STATUS: NOTHING TO DO" <<< "$migration_output"; then
+            test_pass "No legacy state returns nothing-to-do without prompting"
+        else
+            test_fail "Empty migration fixture did not return nothing-to-do"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration success with spaces"
+        mkdir -p "$migration_fixture_root/history" \
+            "$migration_fixture_root/manifests/integrity/remote" \
+            "$migration_fixture_root/status" "$migration_fixture_root/reports/nested"
+        printf "legacy history\n" > "$migration_fixture_root/history/history.log"
+        printf "reference\n" > "$migration_fixture_root/manifests/integrity/remote/integrity-20260713-120000.txt"
+        cp -- "$migration_fixture_root/manifests/integrity/remote/integrity-20260713-120000.txt" \
+            "$migration_fixture_root/manifests/integrity/remote/latest.txt"
+        printf "status\n" > "$migration_fixture_root/status/last_success"
+        printf "report\n" > "$migration_fixture_root/reports/nested/latest report.txt"
+        destination_snapshot_before=$(find "$migration_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        migration_output=$(
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migration
+        )
+        destination_snapshot_after=$(find "$migration_fixture_root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+        if [ "$destination_snapshot_before" = "$destination_snapshot_after" ] &&
+            grep -Fq "MIGRATION STATUS: AVAILABLE" <<< "$migration_output"; then
+            test_pass "Explicit pi-usb analysis is available and strictly read-only"
+        else
+            test_fail "Explicit migration analysis changed state or missed eligible files"
+        fi
+
+        migration_result=0
+        migration_output=$(
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migrate <<< "MIGRATE LEGACY STATE TO pi-usb"
+        ) || migration_result=$?
+        migration_marker=$(find "$migration_fixture_root/status/destinations/pi-usb/migration" \
+            -maxdepth 1 -type f -name 'migration-*.txt' -print -quit 2>/dev/null)
+        if [ "$migration_result" -eq 0 ] &&
+            grep -Fq "MIGRATION STATUS: COMPLETE" <<< "$migration_output" &&
+            grep -Fq "Legacy state retained for rollback." <<< "$migration_output" &&
+            cmp -s -- "$migration_fixture_root/history/history.log" \
+                "$migration_fixture_root/history/destinations/pi-usb/history.log" &&
+            cmp -s -- "$migration_fixture_root/manifests/integrity/remote/latest.txt" \
+                "$migration_fixture_root/manifests/destinations/pi-usb/integrity/remote/latest.txt" &&
+            cmp -s -- "$migration_fixture_root/status/last_success" \
+                "$migration_fixture_root/status/destinations/pi-usb/last_success" &&
+            cmp -s -- "$migration_fixture_root/reports/nested/latest report.txt" \
+                "$migration_fixture_root/reports/destinations/pi-usb/nested/latest report.txt" &&
+            [ -n "$migration_marker" ] && grep -Fxq "legacy_retained=yes" "$migration_marker" &&
+            [ -f "$migration_fixture_root/history/history.log" ] &&
+            [ -f "$migration_fixture_root/manifests/integrity/remote/latest.txt" ]; then
+            test_pass "Confirmed migration copies and verifies all areas while retaining legacy state"
+        else
+            test_fail "Confirmed copy-first migration or rollback retention failed"
+        fi
+        if grep -Fq "| destination-migrate | completed |" \
+            "$migration_fixture_root/history/destinations/pi-usb/migration.log" &&
+            grep -Fq "Final status: COMPLETE" \
+                "$migration_fixture_root"/logs/destination-migration-pi-usb-*.log; then
+            test_pass "Completed migration writes marker, local log, and destination history"
+        else
+            test_fail "Completed migration audit records are incomplete"
+        fi
+        if (
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            destination_migration_analyse
+            destination_select_integrity_remote_directory
+            RETENTION_COUNT=5 health_local_integrity_state \
+                "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" &&
+                [ "$MIGRATION_ANALYSIS_STATUS" = "NOTHING TO DO" ] &&
+                [ "$DESTINATION_INTEGRITY_STATE_SOURCE" = namespaced ] &&
+                [ "$HEALTH_LOCAL_REFERENCE" = integrity-20260713-120000.txt ]
+        ); then
+            test_pass "Post-migration health prefers namespaced state and analysis is idempotent"
+        else
+            test_fail "Post-migration state selection still uses legacy data"
+        fi
+
+        destination_output=$(
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Raspberry Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_info
+        )
+        if grep -Eq '^Namespaced State[[:space:]]*: active$' <<< "$destination_output"; then
+            test_pass "Destination-info reports migrated namespaced state as active"
+        else
+            test_fail "Destination-info does not report migrated namespaced state as active"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration identical"
+        mkdir -p "$migration_fixture_root/history/destinations/pi-usb"
+        printf "same\n" > "$migration_fixture_root/history/history.log"
+        cp -- "$migration_fixture_root/history/history.log" \
+            "$migration_fixture_root/history/destinations/pi-usb/history.log"
+        if (
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            destination_migration_analyse
+            [ "$MIGRATION_ANALYSIS_STATUS" = "NOTHING TO DO" ] &&
+                [ "${MIGRATION_IDENTICAL_FILES[history]}" = 1 ] &&
+                [ "$MIGRATION_TOTAL_CONFLICTS" = 0 ]
+        ); then
+            test_pass "Identical existing migration targets are accepted"
+        else
+            test_fail "Identical existing targets are treated as conflicts"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration conflict"
+        mkdir -p "$migration_fixture_root/history/destinations/pi-usb"
+        printf "legacy\n" > "$migration_fixture_root/history/history.log"
+        printf "different\n" > "$migration_fixture_root/history/destinations/pi-usb/history.log"
+        if (
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            destination_migration_analyse
+            [ "$MIGRATION_ANALYSIS_STATUS" = CONFLICT ]
+        ); then
+            test_pass "Differing destination files produce migration conflicts"
+        else
+            test_fail "Differing destination files are eligible for overwrite"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration symlinks"
+        mkdir -p "$migration_fixture_root/history/destinations/pi-usb"
+        printf "legacy\n" > "$migration_fixture_root/history/history.log"
+        ln -s "$migration_fixture_root/history/history.log" "$migration_fixture_root/history/unsafe-link"
+        ln -s "$migration_fixture_root/history/history.log" \
+            "$migration_fixture_root/history/destinations/pi-usb/history.log"
+        if (
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            destination_migration_analyse
+            [ "$MIGRATION_ANALYSIS_STATUS" = CONFLICT ] &&
+                [ "${MIGRATION_CONFLICTS[history]}" -ge 2 ]
+        ); then
+            test_pass "Symlink migration sources and targets are rejected"
+        else
+            test_fail "Migration accepted a symlink source or target"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration latest mismatch"
+        mkdir -p "$migration_fixture_root/manifests/integrity/remote"
+        printf "newest\n" > "$migration_fixture_root/manifests/integrity/remote/integrity-20260713-120000.txt"
+        printf "wrong\n" > "$migration_fixture_root/manifests/integrity/remote/latest.txt"
+        if (
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            destination_migration_analyse
+            [ "$MIGRATION_ANALYSIS_STATUS" = CONFLICT ]
+        ); then
+            test_pass "Integrity latest.txt mismatch produces a safe conflict"
+        else
+            test_fail "Integrity latest.txt mismatch was considered migratable"
+        fi
+
+        migration_fixture_root="$test_temp_dir/migration cancelled"
+        mkdir -p "$migration_fixture_root/history"
+        printf "legacy\n" > "$migration_fixture_root/history/history.log"
+        migration_result=0
+        migration_output=$(
+            PROJECT_ROOT="$migration_fixture_root"
+            phoenix_init_core
+            DESTINATION_ID=pi-usb
+            DESTINATION_NAME="Pi USB"
+            DESTINATION_TRANSPORT=ssh-rsync
+            unset DESTINATION_CONTEXT_RESOLVED
+            destination_resolve_context
+            # shellcheck disable=SC2317 # Mock invoked indirectly by the command under test.
+            load_config() { destination_resolve_context; }
+            run_destination_migrate <<< "not confirmed"
+        ) || migration_result=$?
+        if [ "$migration_result" -ne 0 ] &&
+            grep -Fq "MIGRATION STATUS: CANCELLED" <<< "$migration_output" &&
+            [ -f "$migration_fixture_root/history/history.log" ] &&
+            [ ! -e "$migration_fixture_root/history/destinations/pi-usb/history.log" ] &&
+            [ ! -d "$migration_fixture_root/status/destinations/pi-usb/migration" ] &&
+            grep -Fq "| destination-migrate | cancelled |" \
+                "$migration_fixture_root/history/destinations/pi-usb/migration.log"; then
+            test_pass "Exact confirmation is required and cancellation copies no legacy state"
+        else
+            test_fail "Cancelled migration copied state or reported success"
         fi
 
         mkdir -p "$test_temp_dir/backup locks"

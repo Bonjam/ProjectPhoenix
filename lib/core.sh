@@ -39,6 +39,7 @@ phoenix_print_usage() {
     echo "  phoenix.sh health          Run read-only end-to-end health checks"
     echo "  phoenix.sh destination-info Show the current destination profile"
     echo "  phoenix.sh destination-migration Analyse legacy destination state"
+    echo "  phoenix.sh destination-migrate Confirm copy-first legacy state migration"
     echo "  phoenix.sh backup         Run backup"
     echo "  phoenix.sh recover        Analyse backup recovery readiness"
     echo "  phoenix.sh restore        Show restore assistant"

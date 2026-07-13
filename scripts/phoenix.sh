@@ -10,7 +10,7 @@ COMMAND="${1:-help}"
 
 phoenix_init_core
 case "$COMMAND" in
-    help|--help|-h|check-config|destination-info|destination-migration|health) ;;
+    help|--help|-h|check-config|destination-info|destination-migration|destination-migrate|health) ;;
     *) phoenix_init_dirs ;;
 esac
 load_phoenix_modules
@@ -29,6 +29,11 @@ case "$COMMAND" in
             "${BACKUP_HISTORY_STATUS:-failed}" \
             "${BACKUP_HISTORY_DETAILS:-Backup engine stopped before completion}"
         exit "$backup_exit_code"
+        ;;
+
+    destination-migrate)
+        show_banner
+        run_destination_migrate
         ;;
 
     destination-info)
