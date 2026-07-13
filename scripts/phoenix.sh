@@ -99,6 +99,11 @@ case "$COMMAND" in
         run_integrity_retention
         ;;
 
+    integrity-cleanup)
+        show_banner
+        run_integrity_cleanup
+        ;;
+
     inventory)
         show_banner
         run_inventory

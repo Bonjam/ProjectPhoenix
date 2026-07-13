@@ -35,6 +35,7 @@ phoenix_print_usage() {
     echo "  phoenix.sh integrity-verify-remote Verify against copied remote reference"
     echo "  phoenix.sh integrity-fetch-remote Fetch latest remote reference read-only"
     echo "  phoenix.sh integrity-retention Analyse manifest retention read-only"
+    echo "  phoenix.sh integrity-cleanup Confirm removal of old integrity manifests"
     echo "  phoenix.sh backup         Run backup"
     echo "  phoenix.sh recover        Analyse backup recovery readiness"
     echo "  phoenix.sh restore        Show restore assistant"

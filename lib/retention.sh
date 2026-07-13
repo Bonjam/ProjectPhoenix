@@ -29,6 +29,7 @@ retention_analyse_directory() {
     RETENTION_OLDEST="none"
     RETENTION_RETAINED=0
     RETENTION_ELIGIBLE=0
+    RETENTION_ELIGIBLE_BYTES=0
     RETENTION_ELIGIBLE_FILES=()
     RETENTION_LATEST_STATUS="missing"
     RETENTION_LATEST_MATCHES="not applicable"
@@ -68,6 +69,10 @@ retention_analyse_directory() {
         RETENTION_ELIGIBLE="$eligible_count"
         retained_start="$eligible_count"
         RETENTION_ELIGIBLE_FILES=("${timestamped_files[@]:0:retained_start}")
+        for entry_name in "${RETENTION_ELIGIBLE_FILES[@]}"; do
+            size=$(stat -c "%s" -- "$directory/$entry_name") || return 2
+            RETENTION_ELIGIBLE_BYTES=$((RETENTION_ELIGIBLE_BYTES + size))
+        done
     fi
 
     if [ -L "$directory/latest.txt" ]; then
@@ -92,6 +97,7 @@ retention_emit_analysis() {
     printf "oldest=%s\n" "$RETENTION_OLDEST"
     printf "retained=%s\n" "$RETENTION_RETAINED"
     printf "eligible=%s\n" "$RETENTION_ELIGIBLE"
+    printf "eligible_bytes=%s\n" "$RETENTION_ELIGIBLE_BYTES"
     printf "latest_status=%s\n" "$RETENTION_LATEST_STATUS"
     printf "latest_matches=%s\n" "$RETENTION_LATEST_MATCHES"
     printf "suspicious_count=%s\n" "$RETENTION_SUSPICIOUS_COUNT"
@@ -111,6 +117,7 @@ retention_parse_analysis() {
     RETENTION_OLDEST=""
     RETENTION_RETAINED=""
     RETENTION_ELIGIBLE=""
+    RETENTION_ELIGIBLE_BYTES=""
     RETENTION_LATEST_STATUS=""
     RETENTION_LATEST_MATCHES=""
     RETENTION_SUSPICIOUS_COUNT=""
@@ -124,6 +131,7 @@ retention_parse_analysis() {
             oldest) RETENTION_OLDEST="$value" ;;
             retained) RETENTION_RETAINED="$value" ;;
             eligible) RETENTION_ELIGIBLE="$value" ;;
+            eligible_bytes) RETENTION_ELIGIBLE_BYTES="$value" ;;
             latest_status) RETENTION_LATEST_STATUS="$value" ;;
             latest_matches) RETENTION_LATEST_MATCHES="$value" ;;
             suspicious_count) RETENTION_SUSPICIOUS_COUNT="$value" ;;
@@ -136,6 +144,7 @@ retention_parse_analysis() {
         [[ "$RETENTION_TOTAL_BYTES" =~ ^[0-9]+$ ]] &&
         [[ "$RETENTION_RETAINED" =~ ^[0-9]+$ ]] &&
         [[ "$RETENTION_ELIGIBLE" =~ ^[0-9]+$ ]] &&
+        [[ "$RETENTION_ELIGIBLE_BYTES" =~ ^[0-9]+$ ]] &&
         [[ "$RETENTION_SUSPICIOUS_COUNT" =~ ^[0-9]+$ ]] &&
         [[ "$RETENTION_LATEST_STATUS" =~ ^(missing|symlink|regular\ file)$ ]] &&
         [[ "$RETENTION_LATEST_MATCHES" =~ ^(yes|no|not\ applicable)$ ]]
@@ -163,6 +172,7 @@ retention_report_area() {
     printf "%-21s: %s\n" "Oldest" "$RETENTION_OLDEST"
     printf "%-21s: %s\n" "Retained" "$RETENTION_RETAINED"
     printf "%-21s: %s\n" "Eligible for Cleanup" "$RETENTION_ELIGIBLE"
+    printf "%-21s: %s bytes\n" "Eligible Bytes" "$RETENTION_ELIGIBLE_BYTES"
     printf "%-21s: %s\n" "latest.txt" "$RETENTION_LATEST_STATUS"
     printf "%-21s: %s\n" "Latest Matches Newest" "$RETENTION_LATEST_MATCHES"
     printf "%-21s: %s\n" "Suspicious Names" "$RETENTION_SUSPICIOUS_COUNT"
@@ -181,7 +191,7 @@ retention_remote_analysis() {
 set -u
 directory="${destination%/}/backup/manifests/integrity"
 if [ ! -d "$directory" ]; then
-    printf "directory_exists=no\ntimestamped_count=0\ntotal_bytes=0\nnewest=none\noldest=none\nretained=0\neligible=0\nlatest_status=missing\nlatest_matches=not applicable\nsuspicious_count=0\n"
+    printf "directory_exists=no\ntimestamped_count=0\ntotal_bytes=0\nnewest=none\noldest=none\nretained=0\neligible=0\neligible_bytes=0\nlatest_status=missing\nlatest_matches=not applicable\nsuspicious_count=0\n"
     exit 0
 fi
 [ -r "$directory" ] && [ -x "$directory" ] || exit 2
@@ -204,6 +214,7 @@ newest=none
 oldest=none
 retained=$count
 eligible=0
+eligible_bytes=0
 if [ "$count" -ne 0 ]; then
     oldest=${timestamped[0]}
     newest=${timestamped[$((count - 1))]}
@@ -211,6 +222,10 @@ fi
 if [ "$count" -gt "$retention_count" ]; then
     retained=$retention_count
     eligible=$((count - retention_count))
+    for name in "${timestamped[@]:0:eligible}"; do
+        size=$(stat -c "%s" -- "$directory/$name") || exit 2
+        eligible_bytes=$((eligible_bytes + size))
+    done
 fi
 latest_status=missing
 latest_matches="not applicable"
@@ -222,8 +237,8 @@ elif [ -f "$directory/latest.txt" ]; then
         if cmp -s -- "$directory/latest.txt" "$directory/$newest"; then latest_matches=yes; else latest_matches=no; fi
     fi
 fi
-printf "directory_exists=yes\ntimestamped_count=%s\ntotal_bytes=%s\nnewest=%s\noldest=%s\nretained=%s\neligible=%s\nlatest_status=%s\nlatest_matches=%s\nsuspicious_count=%s\n" \
-    "$count" "$total_bytes" "$newest" "$oldest" "$retained" "$eligible" "$latest_status" "$latest_matches" "$suspicious"
+printf "directory_exists=yes\ntimestamped_count=%s\ntotal_bytes=%s\nnewest=%s\noldest=%s\nretained=%s\neligible=%s\neligible_bytes=%s\nlatest_status=%s\nlatest_matches=%s\nsuspicious_count=%s\n" \
+    "$count" "$total_bytes" "$newest" "$oldest" "$retained" "$eligible" "$eligible_bytes" "$latest_status" "$latest_matches" "$suspicious"
 if [ "$eligible" -ne 0 ]; then printf "eligible_file=%s\n" "${timestamped[@]:0:eligible}"; fi
 REMOTE_RETENTION
     } | ssh_run_read_only_destination_script \

@@ -29,6 +29,8 @@ run_tests() {
     local retention_symlink_directory
     local retention_mock_output
     local retention_index
+    local cleanup_directory cleanup_changed_directory cleanup_script cleanup_result
+    local -a cleanup_expected=() cleanup_changed_expected=()
 
     section "PROJECT PHOENIX TESTS"
 
@@ -63,6 +65,7 @@ run_tests() {
     if declare -F run_integrity_verify_remote >/dev/null 2>&1; then test_pass "Integrity-verify-remote command function exists"; else test_fail "Integrity-verify-remote command function missing"; fi
     if declare -F run_integrity_fetch_remote >/dev/null 2>&1; then test_pass "Integrity-fetch-remote command function exists"; else test_fail "Integrity-fetch-remote command function missing"; fi
     if declare -F run_integrity_retention >/dev/null 2>&1; then test_pass "Integrity-retention command function exists"; else test_fail "Integrity-retention command function missing"; fi
+    if declare -F run_integrity_cleanup >/dev/null 2>&1; then test_pass "Integrity-cleanup command function exists"; else test_fail "Integrity-cleanup command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -530,6 +533,79 @@ Total transferred file size: 4,096 bytes"
             test_pass "Integrity retention warns about symlink latest"
         else
             test_fail "Integrity retention misses symlink latest"
+        fi
+
+        if integrity_cleanup_confirmation_matches "DELETE OLD INTEGRITY MANIFESTS" &&
+            ! integrity_cleanup_confirmation_matches "delete old integrity manifests"; then
+            test_pass "Integrity cleanup requires exact confirmation"
+        else
+            test_fail "Integrity cleanup confirmation is not exact"
+        fi
+
+        cleanup_directory="$test_temp_dir/cleanup manifests"
+        mkdir -p "$cleanup_directory"
+        for retention_index in 1 2 3 4; do
+            printf "cleanup %s\n" "$retention_index" > "$cleanup_directory/integrity-2026070${retention_index}-010000.txt"
+        done
+        cp -- "$cleanup_directory/integrity-20260704-010000.txt" "$cleanup_directory/latest.txt"
+        printf "unrelated\n" > "$cleanup_directory/notes.txt"
+        ln -s "integrity-20260704-010000.txt" "$cleanup_directory/integrity-20260101-000000.txt"
+        retention_analyse_directory "$cleanup_directory" 2
+        cleanup_expected=("${RETENTION_ELIGIBLE_FILES[@]}")
+        if [ "${#cleanup_expected[@]}" -eq 2 ] &&
+            retention_delete_local_eligible "$cleanup_directory" 2 cleanup_expected &&
+            [ ! -e "$cleanup_directory/integrity-20260701-010000.txt" ] &&
+            [ ! -e "$cleanup_directory/integrity-20260702-010000.txt" ] &&
+            [ -f "$cleanup_directory/integrity-20260703-010000.txt" ] &&
+            [ -f "$cleanup_directory/integrity-20260704-010000.txt" ] &&
+            [ -f "$cleanup_directory/latest.txt" ] &&
+            [ -L "$cleanup_directory/integrity-20260101-000000.txt" ] &&
+            [ -f "$cleanup_directory/notes.txt" ]; then
+            test_pass "Integrity cleanup removes only explicitly eligible regular files"
+        else
+            test_fail "Integrity cleanup did not protect retained or unrelated entries"
+        fi
+
+        retention_analyse_directory "$cleanup_directory" 5
+        if [ "$RETENTION_ELIGIBLE" -eq 0 ]; then
+            test_pass "Integrity cleanup detects nothing-to-do fixtures"
+        else
+            test_fail "Integrity cleanup incorrectly finds eligible files"
+        fi
+
+        cleanup_changed_directory="$test_temp_dir/cleanup changed"
+        mkdir -p "$cleanup_changed_directory"
+        for retention_index in 1 2 3; do
+            printf "changed %s\n" "$retention_index" > "$cleanup_changed_directory/integrity-2026060${retention_index}-010000.txt"
+        done
+        retention_analyse_directory "$cleanup_changed_directory" 2
+        # shellcheck disable=SC2034 # Consumed through a nameref by the cleanup helper.
+        cleanup_changed_expected=("${RETENTION_ELIGIBLE_FILES[@]}")
+        printf "new\n" > "$cleanup_changed_directory/integrity-20260713-010000.txt"
+        if retention_delete_local_eligible "$cleanup_changed_directory" 2 cleanup_changed_expected; then
+            test_fail "Integrity cleanup uses a stale eligible set"
+        elif [ -f "$cleanup_changed_directory/integrity-20260601-010000.txt" ]; then
+            test_pass "Integrity cleanup cancels when the eligible set changes"
+        else
+            test_fail "Integrity cleanup changed files after a race"
+        fi
+
+        cleanup_script=$(retention_remote_cleanup_script 2 \
+            integrity-20260701-010000.txt integrity-20260702-010000.txt)
+        if [[ "$cleanup_script" == *"integrity-20260701-010000.txt"* ]] &&
+            [[ "$cleanup_script" == *"integrity-20260702-010000.txt"* ]] &&
+            ! retention_remote_cleanup_script 2 "../latest.txt" >/dev/null 2>&1; then
+            test_pass "Remote cleanup transports only validated explicit filenames"
+        else
+            test_fail "Remote cleanup accepts unsafe filenames"
+        fi
+
+        cleanup_result=$(integrity_cleanup_failure_status 0)
+        if [ "$cleanup_result" = "FAILED" ] &&
+            [ "$(integrity_cleanup_failure_status 1)" = "PARTIAL" ]; then
+            test_pass "Integrity cleanup distinguishes failed and partial outcomes"
+        else
+            test_fail "Integrity cleanup failure status is incorrect"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
