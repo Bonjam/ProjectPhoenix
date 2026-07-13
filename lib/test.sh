@@ -17,6 +17,7 @@ run_tests() {
     local protected_target
     local test_project_root="$PROJECT_ROOT"
     local verification_status
+    local verification_legacy_fixture verification_policy_fixture verification_source_fixture service_mode
     local integrity_fixture
     local integrity_manifest_one
     local integrity_manifest_two
@@ -34,6 +35,9 @@ run_tests() {
     local -a cleanup_expected=() cleanup_changed_expected=()
     local health_now health_remote_fixture
     local metadata_inventory metadata_guide metadata_root
+    local inventory_source inventory_report
+    local lock_path lock_token lock_result current_process_start signal_name
+    local lock_cleanup_output backup_outcome_label
 
     section "PROJECT PHOENIX TESTS"
 
@@ -50,6 +54,22 @@ run_tests() {
         TESTS_FAILED=$((TESTS_FAILED + 1))
     }
 
+
+    test_later_exit_handler() {
+        # shellcheck disable=SC2317 # Invoked indirectly by the trap registry.
+        printf "later trap ran\n" > "$test_temp_dir/later-trap-marker"
+    }
+
+    test_write_backup_lock_metadata() {
+        local path="$1" pid="$2" process_start="$3" owner_token="$4"
+        {
+            printf "pid=%s\n" "$pid"
+            printf "started=%s\n" "2026-07-13T12:00:00Z"
+            printf "hostname=%s\n" "fixture-host"
+            printf "process_start=%s\n" "$process_start"
+            printf "owner_token=%s\n" "$owner_token"
+        } > "$path"
+    }
     if [ -f "$PROJECT_ROOT/VERSION" ]; then test_pass "VERSION exists"; else test_fail "VERSION missing"; fi
     if [ -f "$PROJECT_ROOT/scripts/phoenix.sh" ]; then test_pass "Launcher exists"; else test_fail "Launcher missing"; fi
     if [ -f "$PROJECT_ROOT/lib/banner.sh" ]; then test_pass "Banner module exists"; else test_fail "Banner module missing"; fi
@@ -57,6 +77,7 @@ run_tests() {
     if [ -f "$PROJECT_ROOT/lib/logging.sh" ]; then test_pass "Logging module exists"; else test_fail "Logging module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/discovery.sh" ]; then test_pass "Discovery module exists"; else test_fail "Discovery module missing"; fi
     if [ -f "$PROJECT_ROOT/lib/backup.sh" ]; then test_pass "Backup module exists"; else test_fail "Backup module missing"; fi
+    if [ -f "$PROJECT_ROOT/lib/service-policy.sh" ] && declare -F service_policy_classify_source >/dev/null 2>&1; then test_pass "Service-policy module is loaded"; else test_fail "Service-policy module is not loaded"; fi
     if [ -f "$PROJECT_ROOT/lib/recovery.sh" ]; then test_pass "Recovery module exists"; else test_fail "Recovery module missing"; fi
     if declare -F run_recovery >/dev/null 2>&1; then test_pass "Recovery command function exists"; else test_fail "Recovery command function missing"; fi
     if declare -F run_restore_dry_run >/dev/null 2>&1; then test_pass "Restore dry-run command function exists"; else test_fail "Restore dry-run command function missing"; fi
@@ -105,6 +126,241 @@ run_tests() {
         mkdir -p "$test_docker_source_two"
         mkdir -p "$test_ssh_dir"
         touch "$test_ssh_key"
+
+        mkdir -p "$test_temp_dir/backup locks"
+        lock_path="$test_temp_dir/backup locks/new.lock"
+        if backup_lock_acquire_path "$lock_path" &&
+            [ -f "$lock_path" ] && [ ! -L "$lock_path" ] &&
+            grep -Fxq "pid=$$" "$lock_path" &&
+            grep -q '^started=' "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            test_pass "New PID-aware backup lock acquisition succeeds"
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "New backup lock acquisition fails"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/active.lock"
+        if backup_lock_acquire_path "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            if backup_lock_acquire_path "$lock_path" true; then
+                test_fail "Active matching backup process permits a second lock"
+            elif [ "$?" -eq 1 ] && [ "$BACKUP_LOCK_ACTIVE_PID" = "$$" ]; then
+                test_pass "Active matching backup process blocks a second lock"
+            else
+                test_fail "Active backup lock is not reported accurately"
+            fi
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Unable to prepare active backup lock fixture"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/dead.lock"
+        test_write_backup_lock_metadata "$lock_path" 99999999 1 dead-owner
+        if backup_lock_acquire_path "$lock_path" &&
+            [ "$BACKUP_LOCK_RECOVERED_PID" = 99999999 ]; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            test_pass "Dead PID backup lock is recovered"
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Dead PID backup lock is not recovered"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/malformed.lock"
+        printf "pid=not-a-pid\nstarted=unknown\n" > "$lock_path"
+        if backup_lock_acquire_path "$lock_path" &&
+            [ "$BACKUP_LOCK_RECOVERED_PID" = not-a-pid ]; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            test_pass "Malformed PID backup lock is recovered safely"
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Malformed PID backup lock handling is unsafe"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/reused-pid.lock"
+        current_process_start=$(backup_lock_process_start "$$")
+        test_write_backup_lock_metadata "$lock_path" "$$" "$current_process_start" reused-owner
+        if backup_lock_acquire_path "$lock_path" &&
+            [ "$BACKUP_LOCK_RECOVERED_PID" = "$$" ]; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            test_pass "Live unrelated reused PID is treated as stale"
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "PID reuse check relies only on process liveness"
+        fi
+
+        touch "$test_temp_dir/backup locks/symlink-target"
+        lock_path="$test_temp_dir/backup locks/symlink.lock"
+        ln -s "$test_temp_dir/backup locks/symlink-target" "$lock_path"
+        lock_result=0
+        backup_lock_acquire_path "$lock_path" || lock_result=$?
+        if [ "$lock_result" -eq 2 ] && [ -L "$lock_path" ]; then
+            test_pass "Symlink backup lock is rejected without removal"
+        else
+            test_fail "Symlink backup lock is accepted or altered"
+        fi
+        rm -f -- "$lock_path"
+
+        lock_path="$test_temp_dir/backup locks/owned-cleanup.lock"
+        if backup_lock_acquire_path "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            if backup_lock_cleanup_path "$lock_path" "$lock_token" &&
+                [ ! -e "$lock_path" ]; then
+                test_pass "Cleanup removes the current process lock"
+            else
+                test_fail "Cleanup leaves the current process lock"
+            fi
+        else
+            test_fail "Unable to prepare owned cleanup fixture"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/other-owner.lock"
+        if backup_lock_acquire_path "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            if ! backup_lock_cleanup_path "$lock_path" different-owner &&
+                [ -f "$lock_path" ]; then
+                test_pass "Cleanup does not remove another owner's lock"
+            else
+                test_fail "Cleanup removes a lock with a different owner token"
+            fi
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Unable to prepare other-owner cleanup fixture"
+        fi
+
+        for signal_name in INT TERM; do
+            lock_path="$test_temp_dir/backup locks/signal-$signal_name.lock"
+            if (
+                backup_lock_acquire_path "$lock_path"
+                # shellcheck disable=SC2034 # Fixture consumed by backup_lock_signal_cleanup.
+                LOCKFILE="$lock_path"
+                backup_lock_signal_cleanup "$signal_name"
+                [ ! -e "$lock_path" ]
+            ); then
+                test_pass "$signal_name cleanup helper removes its owned lock"
+            else
+                test_fail "$signal_name cleanup helper does not remove its owned lock"
+            fi
+        done
+
+        lock_path="$test_temp_dir/backup locks/atomic.lock"
+        if backup_lock_acquire_path "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            lock_result=0
+            backup_lock_acquire_path "$lock_path" true || lock_result=$?
+            if [ "$lock_result" -eq 1 ] && [ -f "$lock_path" ]; then
+                test_pass "Atomic backup lock permits only one acquisition"
+            else
+                test_fail "Two simulated backup lock acquisitions both succeed"
+            fi
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Unable to prepare atomic acquisition fixture"
+        fi
+        for lock_result in 0 23 12; do
+            case "$lock_result" in
+                0) backup_outcome_label="clean" ;;
+                23) backup_outcome_label="warning" ;;
+                *) backup_outcome_label="failed" ;;
+            esac
+            lock_path="$test_temp_dir/backup locks/$backup_outcome_label-completion.lock"
+            if (
+                backup_lock_acquire_path "$lock_path"
+                LOCKFILE="$lock_path"
+                export LOCKFILE
+                backup_lock_finalize_status "$lock_result" "$backup_outcome_label completion"
+                [ "$?" -eq "$lock_result" ] && [ ! -e "$lock_path" ]
+            ); then
+                test_pass "$backup_outcome_label backup completion removes its lock"
+            else
+                test_fail "$backup_outcome_label backup completion leaves its lock"
+            fi
+        done
+
+        lock_path="$test_temp_dir/backup locks/exit-handler.lock"
+        if (
+            backup_lock_acquire_path "$lock_path"
+            LOCKFILE="$lock_path"
+            export LOCKFILE
+            backup_lock_install_traps
+            phoenix_trap_dispatch EXIT
+            [ ! -e "$lock_path" ]
+        ); then
+            test_pass "EXIT safety handler removes an owned lock"
+        else
+            test_fail "EXIT safety handler leaves an owned lock"
+        fi
+
+        rm -f -- "$test_temp_dir/later-trap-marker"
+        lock_path="$test_temp_dir/backup locks/composed-exit.lock"
+        if (
+            backup_lock_acquire_path "$lock_path"
+            LOCKFILE="$lock_path"
+            export LOCKFILE
+            backup_lock_install_traps
+            phoenix_trap_register later-exit test_later_exit_handler EXIT
+            phoenix_trap_dispatch EXIT
+            [ ! -e "$lock_path" ] && [ -f "$test_temp_dir/later-trap-marker" ]
+        ); then
+            test_pass "Later EXIT handler registration preserves lock cleanup"
+        else
+            test_fail "Later EXIT handler registration suppresses lock cleanup"
+        fi
+
+        rm -f -- "$test_temp_dir/later-trap-marker"
+        lock_path="$test_temp_dir/backup locks/existing-exit.lock"
+        if (
+            trap 'test_later_exit_handler' EXIT
+            backup_lock_acquire_path "$lock_path"
+            LOCKFILE="$lock_path"
+            export LOCKFILE
+            backup_lock_install_traps
+            phoenix_trap_dispatch EXIT
+            trap - EXIT
+            [ ! -e "$lock_path" ] && [ -f "$test_temp_dir/later-trap-marker" ]
+        ); then
+            test_pass "Existing EXIT handler is composed with lock cleanup"
+        else
+            test_fail "Lock registration overwrites an existing EXIT handler"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/repeated-cleanup.lock"
+        if (
+            backup_lock_acquire_path "$lock_path"
+            LOCKFILE="$lock_path"
+            export LOCKFILE
+            backup_lock_release "first cleanup"
+            backup_lock_release "repeated cleanup"
+            [ ! -e "$lock_path" ]
+        ); then
+            test_pass "Repeated owned-lock cleanup is harmless"
+        else
+            test_fail "Repeated owned-lock cleanup fails"
+        fi
+
+        lock_path="$test_temp_dir/backup locks/cleanup-diagnostic.lock"
+        if backup_lock_acquire_path "$lock_path"; then
+            lock_token="$BACKUP_LOCK_OWNER_TOKEN"
+            if lock_cleanup_output=$(
+                LOCKFILE="$lock_path"
+                BACKUP_LOCK_OWNER_TOKEN="different-owner"
+                backup_lock_release "fixture failure stage" 2>&1
+            ); then
+                test_fail "Mismatched-owner cleanup reports success"
+            elif grep -Fq "Backup lock cleanup failed" <<< "$lock_cleanup_output" &&
+                grep -Fq "Lock Path : $lock_path" <<< "$lock_cleanup_output" &&
+                grep -Fq "Stage     : fixture failure stage" <<< "$lock_cleanup_output" &&
+                grep -Fq "Reason    : owner token does not match" <<< "$lock_cleanup_output" &&
+                [ -f "$lock_path" ]; then
+                test_pass "Cleanup failure reports path, stage, and reason"
+            else
+                test_fail "Cleanup failure diagnostics are incomplete"
+            fi
+            backup_lock_cleanup_path "$lock_path" "$lock_token" || true
+        else
+            test_fail "Unable to prepare cleanup diagnostic fixture"
+        fi
+
 
         discovery_value=$(discovery_find_common_docker_sources \
             "$test_temp_dir/not present" \
@@ -321,6 +577,114 @@ Total transferred file size: 4,096 bytes"
             test_fail "Auto mode weakens real NAS service checks"
         fi
 
+        verification_legacy_fixture="$test_temp_dir/verify legacy fixture"
+        mkdir -p "$verification_legacy_fixture/backup/manifests/inventory/legacy-id"
+        printf "service-one service-two\n" > \
+            "$verification_legacy_fixture/backup/manifests/inventory/legacy-id/expected-services.txt"
+        verification_resolve_expected_services_mode auto "$verification_legacy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Expected-services list alone remains advisory"
+        else
+            test_fail "Expected-services list alone incorrectly forces required mode"
+        fi
+
+        verification_resolve_expected_services_mode auto "/home/benja/fixture-restore"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Home fixture targets default to advisory"
+        else
+            test_fail "Home fixture target is classified as production"
+        fi
+
+        verification_resolve_expected_services_mode auto /volume2/docker/service-one
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = required ]; then
+            test_pass "Normalised volume2 Docker descendants are required"
+        else
+            test_fail "Volume2 Docker descendant is not required"
+        fi
+        verification_resolve_expected_services_mode auto /volume2/docker-test
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Docker-like path names do not bypass path boundaries"
+        else
+            test_fail "Docker-test path is mistaken for volume2 Docker"
+        fi
+        verification_resolve_expected_services_mode auto /volume2/docker/../docker-test
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Path normalisation prevents production-path tricks"
+        else
+            test_fail "Unnormalised path trick forces required mode"
+        fi
+
+        verification_policy_fixture="$test_temp_dir/verify policy fixture"
+        mkdir -p "$verification_policy_fixture/backup/manifests/inventory/policy-id"
+        printf "original_source=/test/source\nexpected_services_policy=required\nproduction_docker_recovery=no\n" > \
+            "$verification_policy_fixture/backup/manifests/inventory/policy-id/service-policy.txt"
+        verification_resolve_expected_services_mode auto "$verification_policy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = required ]; then
+            test_pass "Explicit required inventory policy is honoured"
+        else
+            test_fail "Explicit required inventory policy is ignored"
+        fi
+        verification_resolve_expected_services_mode advisory "$verification_policy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Explicit advisory config overrides required metadata"
+        else
+            test_fail "Required metadata overrides advisory config"
+        fi
+
+        printf "original_source=/volume2/docker\nexpected_services_policy=advisory\nproduction_docker_recovery=yes\n" > \
+            "$verification_policy_fixture/backup/manifests/inventory/policy-id/service-policy.txt"
+        verification_resolve_expected_services_mode auto "$verification_policy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Explicit advisory inventory policy is honoured"
+        else
+            test_fail "Explicit advisory inventory policy is ignored"
+        fi
+        verification_resolve_expected_services_mode required "$verification_policy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = required ]; then
+            test_pass "Explicit config overrides advisory metadata"
+        else
+            test_fail "Metadata overrides explicit config"
+        fi
+        verification_resolve_expected_services_mode disabled "$verification_policy_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = disabled ]; then
+            test_pass "Explicit disabled config overrides metadata"
+        else
+            test_fail "Metadata overrides disabled config"
+        fi
+
+        verification_source_fixture="$test_temp_dir/verify source fixture"
+        mkdir -p "$verification_source_fixture/backup/manifests/inventory/source-id"
+        printf "Project Phoenix Inventory\nSource: /volume2/docker/\n" > \
+            "$verification_source_fixture/backup/manifests/inventory/source-id/summary.txt"
+        verification_resolve_expected_services_mode auto "$verification_source_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = required ]; then
+            test_pass "Production source metadata selects required mode"
+        else
+            test_fail "Production source metadata is not authoritative"
+        fi
+        printf "Project Phoenix Inventory\nSource: /mnt/c/Projects/ProjectPhoenix/test-local/core-stabilisation-source/\n" > \
+            "$verification_source_fixture/backup/manifests/inventory/source-id/summary.txt"
+        verification_resolve_expected_services_mode auto "$verification_source_fixture"
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Test source metadata selects advisory mode"
+        else
+            test_fail "Test source metadata is classified as production"
+        fi
+
+        verification_resolve_expected_services_mode auto relative-ambiguous-fixture
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Ambiguous auto classification defaults to advisory"
+        else
+            test_fail "Ambiguous auto classification defaults to required"
+        fi
+        if [ "$(service_policy_resolve_for_source auto \
+            /mnt/c/Projects/ProjectPhoenix/test-local/core-stabilisation-source/)" = advisory ] &&
+            [ "$(service_policy_resolve_for_source auto /volume2/docker/)" = required ]; then
+            test_pass "Inventory policy classifies fixture and production sources correctly"
+        else
+            test_fail "Inventory source policy classification is incorrect"
+        fi
+
         # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
         VERIFY_FILES=1
         # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
@@ -359,10 +723,17 @@ Total transferred file size: 4,096 bytes"
             test_fail "Disabled expected services are still enforced"
         fi
         VERIFY_BROKEN_SYMLINKS=1
-        if verification_evaluate_status >/dev/null; then
-            test_fail "Structural failure is weakened by disabled mode"
+        verification_status="PASS"
+        for service_mode in required advisory disabled; do
+            VERIFY_EXPECTED_EFFECTIVE_MODE="$service_mode"
+            if verification_evaluate_status >/dev/null; then
+                verification_status="FAILED"
+            fi
+        done
+        if [ "$verification_status" = "PASS" ]; then
+            test_pass "Structural failures remain authoritative in every service mode"
         else
-            test_pass "Structural failures remain authoritative"
+            test_fail "A service mode weakens structural failures"
         fi
         VERIFY_BROKEN_SYMLINKS=0
 
@@ -885,6 +1256,169 @@ remote_latest_matches=yes"
             test_pass "Health path checks support spaces"
         else
             test_fail "Health path checks reject spaces"
+        fi
+
+        inventory_source="$test_temp_dir/inventory source"
+        mkdir -p "$inventory_source/service one" "$inventory_source/service two"
+        printf "services:\n" > "$inventory_source/service one/compose.yml"
+        printf "services:\n" > "$inventory_source/service two/docker-compose.yaml"
+
+        if (
+            SOURCE="$inventory_source"
+            INVENTORY_DIR="$test_temp_dir/inventory docker absent"
+            VERSION="test"
+            BACKUP_HOST="mock-host"
+            DESTINATION="/mock-destination"
+            # shellcheck disable=SC2034 # Fixture consumed by generate_backup_inventory.
+            EXPECTED_SERVICES="service one service two"
+            generate_backup_inventory project-phoenix-docker-not-installed >/dev/null &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_STATUS" = "success" ] &&
+                [ "$BACKUP_DOCKER_INVENTORY_STATUS" = "unavailable" ] &&
+                [ "$BACKUP_INVENTORY_STATUS" = "warning" ]
+        ); then
+            test_pass "Docker absence preserves successful filesystem inventory"
+        else
+            test_fail "Docker absence fails filesystem inventory"
+        fi
+
+        if grep -Fxq "Docker CLI unavailable" \
+            "$test_temp_dir/inventory docker absent/containers.txt" &&
+            grep -Fxq "Docker CLI unavailable" \
+            "$test_temp_dir/inventory docker absent/docker-info.txt"; then
+            test_pass "Docker absence creates clear runtime placeholders"
+        else
+            test_fail "Docker absence runtime placeholders are unclear"
+        fi
+
+        if (
+            SOURCE="$inventory_source"
+            INVENTORY_DIR="$test_temp_dir/inventory metadata allowed"
+            VERSION="test"
+            BACKUP_HOST="mock-host"
+            DESTINATION="/mock-destination"
+            generate_backup_inventory project-phoenix-docker-not-installed >/dev/null &&
+                run_backup_metadata_hook 0 true &&
+                [ "$BACKUP_METADATA_STATUS" = "success" ]
+        ); then
+            test_pass "Docker unavailability does not block metadata publication"
+        else
+            test_fail "Docker unavailability blocks metadata publication"
+        fi
+
+        if (
+            SOURCE="$inventory_source"
+            INVENTORY_DIR="$test_temp_dir/inventory docker warning"
+            VERSION="test"
+            BACKUP_HOST="mock-host"
+            DESTINATION="/mock-destination"
+            generate_backup_inventory false >/dev/null &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_STATUS" = "success" ] &&
+                [ "$BACKUP_DOCKER_INVENTORY_STATUS" = "warning" ] &&
+                [ "$BACKUP_INVENTORY_STATUS" = "warning" ]
+        ); then
+            test_pass "Docker command failures are optional inventory warnings"
+        else
+            test_fail "Docker command failure incorrectly fails inventory"
+        fi
+
+        if (
+            SOURCE="$inventory_source"
+            INVENTORY_DIR="$test_temp_dir/inventory compose failure"
+            VERSION="test"
+            BACKUP_HOST="mock-host"
+            DESTINATION="/mock-destination"
+            ! generate_backup_inventory project-phoenix-docker-not-installed false \
+                backup_inventory_source_sizes >/dev/null &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_STATUS" = "failed" ] &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_FAILURE" = "Compose-file discovery" ] &&
+                [ "$BACKUP_INVENTORY_STATUS" = "failed" ]
+        ); then
+            test_pass "Compose discovery failure fails required inventory accurately"
+        else
+            test_fail "Compose discovery failure is not handled accurately"
+        fi
+
+        if (
+            # shellcheck disable=SC2034 # Fixture consumed by inventory helpers.
+            SOURCE="$inventory_source"
+            # shellcheck disable=SC2034 # Fixture consumed by inventory helpers.
+            INVENTORY_DIR="$test_temp_dir/inventory size failure"
+            # shellcheck disable=SC2034 # Fixture consumed by inventory helpers.
+            VERSION="test"
+            # shellcheck disable=SC2034 # Fixture consumed by inventory helpers.
+            BACKUP_HOST="mock-host"
+            # shellcheck disable=SC2034 # Fixture consumed by inventory helpers.
+            DESTINATION="/mock-destination"
+            ! generate_backup_inventory project-phoenix-docker-not-installed \
+                backup_inventory_compose_files false >/dev/null &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_STATUS" = "failed" ] &&
+                [ "$BACKUP_FILESYSTEM_INVENTORY_FAILURE" = "source-size collection" ]
+        ); then
+            test_pass "Source-size failure fails required inventory accurately"
+        else
+            test_fail "Source-size failure is not handled accurately"
+        fi
+
+        inventory_report=$(
+            BACKUP_FILESYSTEM_INVENTORY_STATUS="failed"
+            BACKUP_FILESYSTEM_INVENTORY_FAILURE="Compose-file discovery"
+            BACKUP_DOCKER_INVENTORY_STATUS="unavailable"
+            BACKUP_METADATA_STATUS="skipped"
+            backup_report_inventory_status 2>&1
+        )
+        if grep -Fq "Filesystem Inventory FAIL: Compose-file discovery" <<< "$inventory_report" &&
+            grep -Fq "Metadata publication skipped" <<< "$inventory_report" &&
+            ! grep -Fq "Filesystem Inventory PASS" <<< "$inventory_report"; then
+            test_pass "Backup summary reports required inventory status, not directory existence"
+        else
+            test_fail "Backup summary falsely passes a failed filesystem inventory"
+        fi
+
+        if (
+            BACKUP_DOCKER_INVENTORY_STATUS="unavailable"
+            backup_set_outcome_status 0 success success
+            [ "$BACKUP_HISTORY_STATUS" = "completed" ]
+        ); then
+            test_pass "Clean payload with filesystem inventory and no Docker completes"
+        else
+            test_fail "Optional Docker absence degrades a clean backup outcome"
+        fi
+
+        if grep -Fq "Filesystem Inventory Status: success" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Docker Runtime Inventory Status: unavailable" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Docker CLI Found: no" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Docker Daemon Reachable: not applicable" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Overall Inventory Status: warning" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Expected Services Policy: advisory" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "Production Docker Recovery: no" \
+            "$test_temp_dir/inventory docker absent/summary.txt" &&
+            grep -Fq "expected_services_policy=advisory" \
+            "$test_temp_dir/inventory docker absent/service-policy.txt"; then
+            test_pass "Published inventory summary includes runtime status metadata"
+        else
+            test_fail "Published inventory summary omits runtime status metadata"
+        fi
+
+        mkdir -p "$test_temp_dir/inventory production policy"
+        if (
+            SOURCE="/volume2/docker/"
+            INVENTORY_DIR="$test_temp_dir/inventory production policy"
+            export SOURCE INVENTORY_DIR
+            backup_write_service_policy_metadata &&
+                grep -Fxq "expected_services_policy=required" \
+                    "$INVENTORY_DIR/service-policy.txt" &&
+                grep -Fxq "production_docker_recovery=yes" \
+                    "$INVENTORY_DIR/service-policy.txt"
+        ); then
+            test_pass "Production Docker inventory publishes required policy"
+        else
+            test_fail "Production Docker inventory policy is not required"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.

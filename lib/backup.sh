@@ -10,21 +10,12 @@ create_backup_context() {
 
     LOGFILE="$LOG_DIR/$TIMESTAMP.log"
     MANIFEST="$MANIFEST_DIR/$TIMESTAMP.txt"
+    # shellcheck disable=SC2034 # Consumed by the backup-lock module.
     LOCKFILE="/tmp/project_phoenix_backup.lock"
 
     mkdir -p "$LOG_DIR" "$STATUS_DIR" "$MANIFEST_DIR" "$INVENTORY_DIR"
 }
 
-acquire_backup_lock() {
-    if [ -f "$LOCKFILE" ]; then
-        echo "Another Project Phoenix backup appears to be running."
-        exit 1
-    fi
-
-    touch "$LOCKFILE"
-
-    trap 'rm -f "$LOCKFILE"' EXIT
-}
 
 write_backup_header() {
     section "PROJECT PHOENIX BACKUP"
@@ -67,43 +58,6 @@ verify_backup_destination() {
     return 1
 }
 
-generate_backup_inventory() {
-    log_info "Generating inventory..."
-    local inventory_failed=0
-
-    {
-        echo "Project Phoenix Inventory"
-        echo
-        echo "Date: $(date)"
-        echo "Host: $(hostname)"
-        echo "Version: $VERSION"
-        echo "Source: $SOURCE"
-        echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
-    } > "$INVENTORY_DIR/summary.txt"
-
-    if [ -n "${EXPECTED_SERVICES:-}" ]; then
-        printf "%s\n" "$EXPECTED_SERVICES" > "$INVENTORY_DIR/expected-services.txt"
-    fi
-
-    docker ps -a > "$INVENTORY_DIR/containers.txt" 2>&1 || inventory_failed=1
-    docker images > "$INVENTORY_DIR/images.txt" 2>&1 || inventory_failed=1
-    docker volume ls > "$INVENTORY_DIR/volumes.txt" 2>&1 || inventory_failed=1
-    docker network ls > "$INVENTORY_DIR/networks.txt" 2>&1 || inventory_failed=1
-    docker version > "$INVENTORY_DIR/docker-version.txt" 2>&1 || inventory_failed=1
-    docker info > "$INVENTORY_DIR/docker-info.txt" 2>&1 || inventory_failed=1
-
-    find "$SOURCE" \
-        \( -name "docker-compose.yml" -o \
-           -name "docker-compose.yaml" -o \
-           -name "compose.yml" -o \
-           -name "compose.yaml" \) \
-        > "$INVENTORY_DIR/compose-files.txt" 2>&1
-
-    du -sh "$SOURCE"/* > "$INVENTORY_DIR/source-folder-sizes.txt" 2>&1
-
-    [ "$inventory_failed" -eq 0 ] || { log_error "Inventory generation failed"; return 1; }
-    log_success "Inventory PASS"
-}
 
 run_rsync_backup() {
     log_info "Starting rsync..."
@@ -163,9 +117,9 @@ backup_set_outcome_status() {
     if [ "$copy_status" = "failure" ]; then
         BACKUP_HISTORY_STATUS="failed"
         BACKUP_HISTORY_DETAILS="Backup copy failed; integrity generation skipped"
-    elif [ "$metadata_status" = "failed" ]; then
+    elif [ "$metadata_status" != "success" ]; then
         BACKUP_HISTORY_STATUS="partial"
-        BACKUP_HISTORY_DETAILS="Backup payload copied; metadata publication failed at ${BACKUP_METADATA_STAGE:-unknown stage}; integrity=$2"
+        BACKUP_HISTORY_DETAILS="Backup payload copied; metadata publication $metadata_status at ${BACKUP_METADATA_STAGE:-unknown stage}; integrity=$2"
     elif [ "$2" = "success" ]; then
         if [ "$copy_status" = "warning" ]; then
             BACKUP_HISTORY_STATUS="completed-with-warnings"
@@ -203,6 +157,9 @@ write_backup_manifest() {
         echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
         echo "Backup Size: $BACKUP_SIZE"
         echo "Inventory: $INVENTORY_DIR"
+        echo "Filesystem Inventory Status: ${BACKUP_FILESYSTEM_INVENTORY_STATUS:-unknown}"
+        echo "Docker Runtime Inventory Status: ${BACKUP_DOCKER_INVENTORY_STATUS:-unknown}"
+        echo "Inventory Status: ${BACKUP_INVENTORY_STATUS:-unknown}"
         echo "Integrity Status: ${BACKUP_INTEGRITY_STATUS:-skipped}"
         echo "Metadata Status: ${BACKUP_METADATA_STATUS:-skipped}"
         if [ -n "${INTEGRITY_REMOTE_REFERENCE_NAME:-}" ]; then
@@ -221,11 +178,7 @@ write_backup_health_report() {
     echo "=============================================================" | tee -a "$LOGFILE"
     echo | tee -a "$LOGFILE"
 
-    if [ -d "$INVENTORY_DIR" ]; then
-        log_success "Inventory PASS" | tee -a "$LOGFILE"
-    else
-        log_error "Inventory FAIL" | tee -a "$LOGFILE"
-    fi
+    backup_report_inventory_status | tee -a "$LOGFILE"
 
     if [ "$copy_status" != "failure" ]; then
         if [ "$copy_status" = "warning" ]; then
@@ -245,7 +198,7 @@ write_backup_health_report() {
             OVERALL="PROJECT PHOENIX READY WITH INTEGRITY WARNING"
         fi
         if [ "${BACKUP_METADATA_STATUS:-failed}" != "success" ]; then
-            log_warning "Metadata publication failed - backup payload remains usable" | tee -a "$LOGFILE"
+            log_warning "Metadata publication ${BACKUP_METADATA_STATUS:-failed} - backup payload remains usable" | tee -a "$LOGFILE"
             OVERALL="PROJECT PHOENIX READY WITH METADATA WARNING"
         fi
         date > "$STATUS_DIR/last_success"
@@ -271,23 +224,41 @@ write_backup_health_report() {
 }
 
 run_backup() {
+    local backup_exit_code
+
     load_config
     get_version
 
     create_backup_context
-    acquire_backup_lock
+    if ! acquire_backup_lock; then
+        BACKUP_HISTORY_STATUS="failed"
+        BACKUP_HISTORY_DETAILS="Backup lock acquisition failed"
+        return 1
+    fi
     write_backup_header
 
-    verify_backup_ssh || exit 1
-    verify_backup_destination || exit 1
+    if ! verify_backup_ssh; then
+        BACKUP_HISTORY_STATUS="failed"
+        BACKUP_HISTORY_DETAILS="SSH validation failed before backup"
+        backup_lock_finalize_status 1 "SSH validation failure"
+        return $?
+    fi
+    if ! verify_backup_destination; then
+        # shellcheck disable=SC2034 # Consumed by launcher history reporting.
+        BACKUP_HISTORY_STATUS="failed"
+        # shellcheck disable=SC2034 # Consumed by launcher history reporting.
+        BACKUP_HISTORY_DETAILS="Destination validation failed before backup"
+        backup_lock_finalize_status 1 "destination validation failure"
+        return $?
+    fi
 
-    if generate_backup_inventory; then BACKUP_INVENTORY_STATUS="success"; else BACKUP_INVENTORY_STATUS="failed"; fi
+    if generate_backup_inventory; then :; fi
     run_rsync_backup
-    if [ "$BACKUP_INVENTORY_STATUS" = "success" ]; then
+    if [ "$BACKUP_FILESYSTEM_INVENTORY_STATUS" = "success" ]; then
         if run_backup_metadata_hook "$RSYNC_EXIT"; then :; fi
     else
-        BACKUP_METADATA_STATUS="failed"
-        BACKUP_METADATA_STAGE="inventory generation"
+        BACKUP_METADATA_STATUS="skipped"
+        BACKUP_METADATA_STAGE="filesystem inventory: ${BACKUP_FILESYSTEM_INVENTORY_FAILURE:-unknown failure}"
     fi
     if run_backup_integrity_hook "$RSYNC_EXIT"; then
         :
@@ -297,8 +268,9 @@ run_backup() {
     write_backup_manifest
     write_backup_health_report
 
-    if [ "${BACKUP_METADATA_STATUS:-failed}" = "failed" ] && [ "$RSYNC_EXIT" -eq 0 ]; then
-        return 23
+    backup_exit_code="$RSYNC_EXIT"
+    if [ "${BACKUP_METADATA_STATUS:-failed}" != "success" ] && [ "$RSYNC_EXIT" -eq 0 ]; then
+        backup_exit_code=23
     fi
-    return "$RSYNC_EXIT"
+    backup_lock_finalize_status "$backup_exit_code" "backup completion"
 }

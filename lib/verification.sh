@@ -3,10 +3,52 @@
 verification_count_records() {
     awk "NF { count++ } END { print count + 0 }"
 }
+verification_latest_inventory_file() {
+    local target_directory="$1"
+    local file_name="$2"
+    local inventory_root="$target_directory/backup/manifests/inventory"
+    local -a matching_files=()
+
+    [ -d "$inventory_root" ] || return 1
+    mapfile -d '' -t matching_files < <(
+        find "$inventory_root" -mindepth 2 -maxdepth 2 -type f -name "$file_name" -print0 2>/dev/null |
+            sort -z
+    )
+    [ "${#matching_files[@]}" -gt 0 ] || return 1
+    printf "%s\n" "${matching_files[${#matching_files[@]} - 1]}"
+}
+
+verification_read_expected_services_metadata() {
+    local target_directory="$1"
+    local metadata_file summary_file key value line
+
+    VERIFY_EXPECTED_METADATA_POLICY=""
+    VERIFY_EXPECTED_METADATA_SOURCE=""
+    if metadata_file=$(verification_latest_inventory_file "$target_directory" service-policy.txt); then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                original_source) VERIFY_EXPECTED_METADATA_SOURCE="$value" ;;
+                expected_services_policy) VERIFY_EXPECTED_METADATA_POLICY="$value" ;;
+            esac
+        done < "$metadata_file"
+    elif summary_file=$(verification_latest_inventory_file "$target_directory" summary.txt); then
+        while IFS= read -r line; do
+            case "$line" in
+                "Original Source: "*) VERIFY_EXPECTED_METADATA_SOURCE="${line#Original Source: }" ;;
+                "Source: "*) [ -n "$VERIFY_EXPECTED_METADATA_SOURCE" ] || VERIFY_EXPECTED_METADATA_SOURCE="${line#Source: }" ;;
+                "Expected Services Policy: "*) VERIFY_EXPECTED_METADATA_POLICY="${line#Expected Services Policy: }" ;;
+            esac
+        done < "$summary_file"
+    fi
+    case "$VERIFY_EXPECTED_METADATA_POLICY" in
+        required|advisory|disabled) ;;
+        *) VERIFY_EXPECTED_METADATA_POLICY="" ;;
+    esac
+}
+
 verification_resolve_expected_services_mode() {
     local configured_mode="${1:-auto}"
     local target_directory="$2"
-    local normalized_target="${target_directory%/}"
 
     VERIFY_EXPECTED_MODE_FALLBACK="no"
     case "$configured_mode" in
@@ -14,19 +56,18 @@ verification_resolve_expected_services_mode() {
         *) VERIFY_EXPECTED_SERVICES_MODE="auto"; VERIFY_EXPECTED_MODE_FALLBACK="yes" ;;
     esac
     VERIFY_EXPECTED_EFFECTIVE_MODE="$VERIFY_EXPECTED_SERVICES_MODE"
-    if [ "$VERIFY_EXPECTED_SERVICES_MODE" = "auto" ]; then
-        case "$normalized_target" in
-            /volume2/docker|/volume2/docker/*) VERIFY_EXPECTED_EFFECTIVE_MODE="required" ;;
-            *)
-                if [ -f "$target_directory/backup/manifests/expected-services.txt" ] ||
-                    [ -f "$target_directory/.project-phoenix-recovery-required" ] ||
-                    find "$target_directory/backup/manifests/inventory" -mindepth 2 -maxdepth 2 -type f -name expected-services.txt -print -quit 2>/dev/null | grep -q .; then
-                    VERIFY_EXPECTED_EFFECTIVE_MODE="required"
-                else
-                    VERIFY_EXPECTED_EFFECTIVE_MODE="advisory"
-                fi
-                ;;
-        esac
+    [ "$VERIFY_EXPECTED_SERVICES_MODE" = "auto" ] || return 0
+
+    verification_read_expected_services_metadata "$target_directory"
+    if [ -n "$VERIFY_EXPECTED_METADATA_POLICY" ]; then
+        VERIFY_EXPECTED_EFFECTIVE_MODE="$VERIFY_EXPECTED_METADATA_POLICY"
+    elif [ -f "$target_directory/.project-phoenix-recovery-required" ] &&
+        [ ! -L "$target_directory/.project-phoenix-recovery-required" ]; then
+        VERIFY_EXPECTED_EFFECTIVE_MODE="required"
+    elif [ -n "$VERIFY_EXPECTED_METADATA_SOURCE" ]; then
+        VERIFY_EXPECTED_EFFECTIVE_MODE=$(service_policy_classify_source "$VERIFY_EXPECTED_METADATA_SOURCE")
+    else
+        VERIFY_EXPECTED_EFFECTIVE_MODE=$(service_policy_classify_source "$target_directory")
     fi
 }
 

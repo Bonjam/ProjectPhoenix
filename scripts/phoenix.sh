@@ -20,10 +20,15 @@ case "$COMMAND" in
 
     backup)
         show_banner
-        run_backup
+        if run_backup; then
+            backup_exit_code=0
+        else
+            backup_exit_code=$?
+        fi
         write_history_entry "backup" \
-            "${BACKUP_HISTORY_STATUS:-completed}" \
-            "${BACKUP_HISTORY_DETAILS:-Backup engine executed}"
+            "${BACKUP_HISTORY_STATUS:-failed}" \
+            "${BACKUP_HISTORY_DETAILS:-Backup engine stopped before completion}"
+        exit "$backup_exit_code"
         ;;
 
     banner)

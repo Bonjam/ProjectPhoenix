@@ -1,5 +1,21 @@
 #!/bin/bash
 
+integrity_register_temp_cleanup() {
+    local quoted_temp_dir cleanup_command
+
+    [ -n "${INTEGRITY_TEMP_DIR:-}" ] || return 1
+    INTEGRITY_TEMP_HANDLER_ID="integrity-temp-${BASHPID}-${RANDOM}"
+    printf -v quoted_temp_dir "%q" "$INTEGRITY_TEMP_DIR"
+    cleanup_command="rm -rf -- $quoted_temp_dir"
+    phoenix_trap_register "$INTEGRITY_TEMP_HANDLER_ID" "$cleanup_command" EXIT HUP INT TERM
+}
+
+integrity_unregister_temp_cleanup() {
+    [ -n "${INTEGRITY_TEMP_HANDLER_ID:-}" ] || return 0
+    phoenix_trap_unregister "$INTEGRITY_TEMP_HANDLER_ID" EXIT HUP INT TERM
+    INTEGRITY_TEMP_HANDLER_ID=""
+}
+
 integrity_remote_path_selected() {
     case "$1" in
         backup/manifests/integrity|backup/manifests/integrity/*) return 1 ;;
@@ -256,7 +272,7 @@ integrity_fetch_with_downloader() {
     INTEGRITY_FETCH_ERROR_STAGE="manifest validation"
     integrity_manifest_root_safe "$manifest_root" "$workspace_root" || return 1
     INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-integrity-fetch.XXXXXX") || return 1
-    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    integrity_register_temp_cleanup || return 1
     downloaded_manifest="$INTEGRITY_TEMP_DIR/latest.txt"
     INTEGRITY_FETCH_ERROR_STAGE="remote fetch"
     if ! "$downloader" "$@" "$downloaded_manifest"; then
@@ -268,7 +284,7 @@ integrity_fetch_with_downloader() {
         return 1
     fi
     rm -rf -- "$INTEGRITY_TEMP_DIR"
-    trap - EXIT HUP INT TERM
+    integrity_unregister_temp_cleanup
 }
 
 integrity_download_remote_reference() {
@@ -288,7 +304,7 @@ integrity_generate_remote_reference() {
     # shellcheck disable=SC2034 # Nameref outputs validate the downloaded manifest.
     local -A remote_file_sizes=() remote_file_hashes=() remote_links=()
     INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-remote-integrity.XXXXXX") || return 1
-    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    integrity_register_temp_cleanup || return 1
     local_manifest="$INTEGRITY_TEMP_DIR/remote-manifest.txt"
     if ! ssh_run_destination_script "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" \
         "$DESTINATION" accept-new > "$local_manifest" <<\REMOTE_INTEGRITY
@@ -365,7 +381,7 @@ REMOTE_INTEGRITY
     # shellcheck disable=SC2034 # Consumed by backup metadata and reporting.
     INTEGRITY_REMOTE_REFERENCE_NAME="$reference_name"
     rm -rf -- "$INTEGRITY_TEMP_DIR"
-    trap - EXIT HUP INT TERM
+    integrity_unregister_temp_cleanup
 }
 
 run_integrity_create() {
@@ -379,11 +395,11 @@ run_integrity_create() {
     mkdir -p "$integrity_directory"
     [ ! -e "$manifest_file" ] || { log_error "Timestamped integrity manifest already exists"; return 1; }
     INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-integrity.XXXXXX") || return 1
-    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    integrity_register_temp_cleanup || return 1
     integrity_generate_manifest "$SOURCE" "$INTEGRITY_TEMP_DIR/manifest.txt" "$(date -Iseconds)" || return 1
     cp -- "$INTEGRITY_TEMP_DIR/manifest.txt" "$manifest_file"
     cp -- "$INTEGRITY_TEMP_DIR/manifest.txt" "$integrity_directory/latest.txt"
-    rm -rf -- "$INTEGRITY_TEMP_DIR"; trap - EXIT HUP INT TERM
+    rm -rf -- "$INTEGRITY_TEMP_DIR"; integrity_unregister_temp_cleanup
     log_success "Integrity manifest created"; echo "Manifest: $manifest_file"; echo "Latest  : $integrity_directory/latest.txt"
 }
 
@@ -396,7 +412,7 @@ run_integrity_verify() {
     integrity_validate_source || { log_error "SOURCE is missing, inaccessible, or unsafe"; return 1; }
     [ -f "$manifest_file" ] || { log_error "Integrity manifest is missing: $manifest_file"; return 1; }
     INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-integrity.XXXXXX") || return 1
-    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    integrity_register_temp_cleanup || return 1
     actual_manifest="$INTEGRITY_TEMP_DIR/actual.txt"
     integrity_generate_manifest "$SOURCE" "$actual_manifest" "verification" || return 1
     if integrity_compare_manifests "$manifest_file" "$actual_manifest"; then compare_exit_code=0; else compare_exit_code=$?; fi
@@ -415,7 +431,7 @@ run_integrity_verify() {
     integrity_print_examples "Missing Symlinks" "${INTEGRITY_MISSING_LINKS[@]}"; integrity_print_examples "Unexpected Symlinks" "${INTEGRITY_UNEXPECTED_LINKS[@]}"
     integrity_print_examples "Changed Link Targets" "${INTEGRITY_CHANGED_LINK_TARGETS[@]}"
     mismatch_total=$((${#INTEGRITY_MISSING_FILES[@]} + ${#INTEGRITY_UNEXPECTED_FILES[@]} + ${#INTEGRITY_CHANGED_SIZES[@]} + ${#INTEGRITY_CHANGED_HASHES[@]} + ${#INTEGRITY_MISSING_LINKS[@]} + ${#INTEGRITY_UNEXPECTED_LINKS[@]} + ${#INTEGRITY_CHANGED_LINK_TARGETS[@]}))
-    rm -rf -- "$INTEGRITY_TEMP_DIR"; trap - EXIT HUP INT TERM
+    rm -rf -- "$INTEGRITY_TEMP_DIR"; integrity_unregister_temp_cleanup
     echo
     if [ "$mismatch_total" -eq 0 ]; then echo "INTEGRITY STATUS: PASS"; echo; echo "No files were changed."; echo "Docker containers were not started."; return 0; fi
     echo "INTEGRITY STATUS: FAILED"; echo; echo "No files were changed."; echo "Docker containers were not started."; return 1
