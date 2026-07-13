@@ -24,6 +24,11 @@ run_tests() {
     local remote_reference_directory
     local integrity_fetch_root
     local integrity_remote_fixture
+    local retention_directory
+    local retention_mismatch_directory
+    local retention_symlink_directory
+    local retention_mock_output
+    local retention_index
 
     section "PROJECT PHOENIX TESTS"
 
@@ -57,6 +62,7 @@ run_tests() {
     if declare -F integrity_generate_remote_reference >/dev/null 2>&1; then test_pass "Automatic remote integrity function exists"; else test_fail "Automatic remote integrity function missing"; fi
     if declare -F run_integrity_verify_remote >/dev/null 2>&1; then test_pass "Integrity-verify-remote command function exists"; else test_fail "Integrity-verify-remote command function missing"; fi
     if declare -F run_integrity_fetch_remote >/dev/null 2>&1; then test_pass "Integrity-fetch-remote command function exists"; else test_fail "Integrity-fetch-remote command function missing"; fi
+    if declare -F run_integrity_retention >/dev/null 2>&1; then test_pass "Integrity-retention command function exists"; else test_fail "Integrity-retention command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -444,6 +450,86 @@ Total transferred file size: 4,096 bytes"
             test_fail "Remote integrity fetch accepts unsafe manifest roots"
         else
             test_pass "Remote integrity fetch rejects unsafe manifest roots"
+        fi
+
+        retention_resolve_count ""
+        if [ "$RETENTION_COUNT" = "5" ] &&
+            [ "$RETENTION_COUNT_DEFAULTED" = "yes" ]; then
+            test_pass "Integrity retention defaults to five"
+        else
+            test_fail "Integrity retention default is incorrect"
+        fi
+        retention_resolve_count 3
+        if [ "$RETENTION_COUNT" = "3" ] &&
+            [ "$RETENTION_COUNT_DEFAULTED" = "no" ]; then
+            test_pass "Integrity retention honours valid count"
+        else
+            test_fail "Integrity retention ignores valid count"
+        fi
+        retention_resolve_count invalid
+        if [ "$RETENTION_COUNT" = "5" ] &&
+            [ "$RETENTION_COUNT_DEFAULTED" = "yes" ]; then
+            test_pass "Invalid integrity retention falls back safely"
+        else
+            test_fail "Invalid integrity retention does not fall back"
+        fi
+
+        retention_directory="$test_temp_dir/retention history with spaces"
+        mkdir -p "$retention_directory"
+        for retention_index in 1 2 3 4 5 6 7; do
+            printf "manifest %s\n" "$retention_index" > \
+                "$retention_directory/integrity-2026070${retention_index}-010000.txt"
+        done
+        cp -- "$retention_directory/integrity-20260707-010000.txt" \
+            "$retention_directory/latest.txt"
+        printf "ignored\n" > "$retention_directory/notes.txt"
+        printf "suspicious\n" > "$retention_directory/integrity-bad.txt"
+        retention_analyse_directory "$retention_directory" 5
+        if [ "$RETENTION_TIMESTAMPED_COUNT" = "7" ] &&
+            [ "$RETENTION_RETAINED" = "5" ] &&
+            [ "$RETENTION_ELIGIBLE" = "2" ] &&
+            [ "${RETENTION_ELIGIBLE_FILES[*]}" = \
+                "integrity-20260701-010000.txt integrity-20260702-010000.txt" ] &&
+            [ "$RETENTION_LATEST_STATUS" = "regular file" ] &&
+            [ "$RETENTION_LATEST_MATCHES" = "yes" ] &&
+            [ "$RETENTION_SUSPICIOUS_COUNT" = "1" ]; then
+            test_pass "Integrity retention classifies history deterministically"
+        else
+            test_fail "Integrity retention history classification is incorrect"
+        fi
+
+        retention_mock_output=$(retention_emit_analysis)
+        if retention_parse_analysis "$retention_mock_output" &&
+            [ "$RETENTION_TIMESTAMPED_COUNT" = "7" ] &&
+            [ "$RETENTION_ELIGIBLE" = "2" ]; then
+            test_pass "Mocked remote retention output parses safely"
+        else
+            test_fail "Mocked remote retention output parsing failed"
+        fi
+
+        retention_mismatch_directory="$test_temp_dir/retention mismatch"
+        mkdir -p "$retention_mismatch_directory"
+        printf "newest\n" > \
+            "$retention_mismatch_directory/integrity-20260713-010000.txt"
+        printf "different\n" > "$retention_mismatch_directory/latest.txt"
+        retention_analyse_directory "$retention_mismatch_directory" 5
+        if [ "$RETENTION_LATEST_MATCHES" = "no" ]; then
+            test_pass "Integrity retention detects mismatched latest"
+        else
+            test_fail "Integrity retention misses mismatched latest"
+        fi
+
+        retention_symlink_directory="$test_temp_dir/retention symlink"
+        mkdir -p "$retention_symlink_directory"
+        printf "manifest\n" > \
+            "$retention_symlink_directory/integrity-20260713-020000.txt"
+        ln -s "integrity-20260713-020000.txt" \
+            "$retention_symlink_directory/latest.txt"
+        retention_analyse_directory "$retention_symlink_directory" 5
+        if [ "$RETENTION_LATEST_STATUS" = "symlink" ]; then
+            test_pass "Integrity retention warns about symlink latest"
+        else
+            test_fail "Integrity retention misses symlink latest"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.

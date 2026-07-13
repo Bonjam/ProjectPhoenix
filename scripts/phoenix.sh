@@ -94,6 +94,11 @@ case "$COMMAND" in
         run_integrity_fetch_remote
         ;;
 
+    integrity-retention)
+        show_banner
+        run_integrity_retention
+        ;;
+
     inventory)
         show_banner
         run_inventory

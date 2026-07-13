@@ -65,6 +65,12 @@ ssh_run_read_only_destination_script() {
     local host="$3"
     local destination="$4"
     local strict_host_key_checking="${5:-accept-new}"
+    local remote_shell="${6:-sh}"
+
+    case "$remote_shell" in
+        sh|bash) ;;
+        *) return 1 ;;
+    esac
 
     {
         printf "%s\n" "$destination"
@@ -75,7 +81,7 @@ ssh_run_read_only_destination_script() {
         -o ConnectTimeout=8 \
         -o "StrictHostKeyChecking=$strict_host_key_checking" \
         "${user}@${host}" \
-        "IFS= read -r destination; export destination; sh -s"
+        "IFS= read -r destination; export destination; $remote_shell -s"
 }
 
 ssh_run_destination_script() {
