@@ -24,6 +24,7 @@ run_tests() {
     local remote_reference_directory
     local integrity_fetch_root
     local integrity_remote_fixture
+    local integrity_changed_fixture integrity_collision_root integrity_symlink_root
     local retention_directory
     local retention_mismatch_directory
     local retention_symlink_directory
@@ -32,6 +33,7 @@ run_tests() {
     local cleanup_directory cleanup_changed_directory cleanup_script cleanup_result
     local -a cleanup_expected=() cleanup_changed_expected=()
     local health_now health_remote_fixture
+    local metadata_inventory metadata_guide metadata_root
 
     section "PROJECT PHOENIX TESTS"
 
@@ -298,6 +300,120 @@ Total transferred file size: 4,096 bytes"
             test_fail "Restore verification status evaluation is incorrect"
         fi
 
+        verification_resolve_expected_services_mode "" "$test_temp_dir/recovery"
+        if [ "$VERIFY_EXPECTED_SERVICES_MODE" = auto ] &&
+            [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = advisory ]; then
+            test_pass "Verify mode defaults to auto advisory for fixtures"
+        else
+            test_fail "Verify auto mode is incorrect for fixtures"
+        fi
+        verification_resolve_expected_services_mode invalid "$test_temp_dir/recovery"
+        if [ "$VERIFY_EXPECTED_SERVICES_MODE" = auto ] &&
+            [ "$VERIFY_EXPECTED_MODE_FALLBACK" = yes ]; then
+            test_pass "Invalid verify mode falls back safely"
+        else
+            test_fail "Invalid verify mode does not fall back"
+        fi
+        verification_resolve_expected_services_mode auto /volume2/docker
+        if [ "$VERIFY_EXPECTED_EFFECTIVE_MODE" = required ]; then
+            test_pass "Auto mode requires services for volume2 Docker"
+        else
+            test_fail "Auto mode weakens real NAS service checks"
+        fi
+
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_FILES=1
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_UNREADABLE_FILES=0
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_UNREADABLE_DIRECTORIES=0
+        VERIFY_BROKEN_SYMLINKS=0
+        VERIFY_COMPOSE_FILES=1
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_INVENTORY="found"
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_MANIFEST="found"
+        # shellcheck disable=SC2034 # Fixture consumed by verification_evaluate_status.
+        VERIFY_RESTORE_GUIDE="found"
+        VERIFY_EMPTY_TOP_LEVEL_DIRECTORIES=0
+        VERIFY_EXPECTED_SKIPPED="no"
+        VERIFY_EXPECTED_MISSING=1
+        VERIFY_EXPECTED_EFFECTIVE_MODE=advisory
+        if [ "$(verification_evaluate_status)" = WARNING ]; then
+            test_pass "Fixture auto and advisory modes warn for missing services"
+        else
+            test_fail "Advisory expected services fail a fixture"
+        fi
+        VERIFY_EXPECTED_EFFECTIVE_MODE=required
+        if verification_evaluate_status >/dev/null; then
+            test_fail "Required expected services do not fail"
+        else
+            test_pass "Required expected services fail when missing"
+        fi
+        VERIFY_EXPECTED_EFFECTIVE_MODE=disabled
+        verification_compare_expected_services "$test_temp_dir/recovery" "missing-service"
+        if [ "$VERIFY_EXPECTED_SKIPPED" = yes ] &&
+            [ "$(verification_evaluate_status)" = PASS ]; then
+            test_pass "Disabled expected services are skipped clearly"
+        else
+            test_fail "Disabled expected services are still enforced"
+        fi
+        VERIFY_BROKEN_SYMLINKS=1
+        if verification_evaluate_status >/dev/null; then
+            test_fail "Structural failure is weakened by disabled mode"
+        else
+            test_pass "Structural failures remain authoritative"
+        fi
+        VERIFY_BROKEN_SYMLINKS=0
+
+        metadata_inventory="$test_temp_dir/metadata inventory"
+        metadata_guide="$test_temp_dir/restore guide.md"
+        metadata_root="$test_temp_dir/fresh backup/backup"
+        mkdir -p "$metadata_inventory"
+        printf "inventory fixture\n" > "$metadata_inventory/summary.txt"
+        printf "restore fixture\n" > "$metadata_guide"
+        if backup_publish_metadata_local "$metadata_inventory" "$metadata_guide" \
+            "$metadata_root" fixture-id &&
+            [ -f "$metadata_root/restore/README.md" ] &&
+            [ -f "$metadata_root/manifests/inventory/fixture-id/summary.txt" ]; then
+            test_pass "Fresh backup publication includes guide and inventory"
+        else
+            test_fail "Fresh backup metadata publication is incomplete"
+        fi
+        if backup_publish_metadata_local "$metadata_inventory" "$metadata_guide" \
+            "$metadata_root" fixture-id; then
+            test_pass "Identical metadata publication is idempotent"
+        else
+            test_fail "Identical metadata publication fails"
+        fi
+        printf "conflict\n" > "$metadata_inventory/summary.txt"
+        if backup_publish_metadata_local "$metadata_inventory" "$metadata_guide" \
+            "$metadata_root" fixture-id; then
+            test_fail "Conflicting timestamped inventory is overwritten"
+        else
+            test_pass "Conflicting timestamped inventory fails safely"
+        fi
+        if run_backup_metadata_hook 0 false; then
+            test_fail "Metadata publication failure reports success"
+        elif [ "$BACKUP_METADATA_STATUS" = failed ]; then
+            test_pass "Metadata publication failure is reported accurately"
+        else
+            test_fail "Metadata publication failure status is unclear"
+        fi
+        backup_set_outcome_status 0 success failed
+        if [ "$BACKUP_HISTORY_STATUS" = partial ] &&
+            [[ "$BACKUP_HISTORY_DETAILS" == *"metadata publication failed"* ]]; then
+            test_pass "Metadata failure prevents a full backup PASS"
+        else
+            test_fail "Metadata failure is lost from backup outcome"
+        fi
+        if integrity_remote_path_selected backup/restore/README.md &&
+            integrity_remote_path_selected backup/manifests/inventory/fixture/summary.txt &&
+            ! integrity_remote_path_selected backup/manifests/integrity/latest.txt; then
+            test_pass "Integrity includes metadata and excludes its own directory"
+        else
+            test_fail "Integrity metadata selection is incorrect"
+        fi
         integrity_fixture="$test_temp_dir/integrity fixture"
         integrity_manifest_one="$test_temp_dir/integrity-one.txt"
         integrity_manifest_two="$test_temp_dir/integrity-two.txt"
@@ -435,17 +551,68 @@ Total transferred file size: 4,096 bytes"
         if integrity_fetch_with_downloader \
             "$integrity_fetch_root/manifests" "$integrity_fetch_root" \
             cp -- "$integrity_remote_fixture"; then
-            test_fail "Remote integrity fetch replaces timestamped references"
+            test_pass "Identical timestamped and latest repeated fetch succeeds"
         else
-            test_pass "Remote integrity fetch preserves existing timestamped references"
+            test_fail "Identical repeated remote integrity fetch is not idempotent"
+        fi
+
+        printf "stale latest\n" > "$integrity_fetch_root/manifests/integrity/remote/latest.txt"
+        if integrity_fetch_with_downloader             "$integrity_fetch_root/manifests" "$integrity_fetch_root"             cp -- "$integrity_remote_fixture" &&
+            cmp -s -- "$integrity_remote_fixture"                 "$integrity_fetch_root/manifests/integrity/remote/latest.txt"; then
+            test_pass "Differing local latest is replaced atomically"
+        else
+            test_fail "Differing local latest is not replaced safely"
+        fi
+
+        if integrity_fetch_with_downloader             "$integrity_fetch_root/manifests" "$integrity_fetch_root"             cp -- "$integrity_remote_fixture" &&
+            [ -z "${INTEGRITY_FETCH_ERROR_STAGE:-}" ]; then
+            test_pass "Successful publication does not report a partial failure"
+        else
+            test_fail "Safely published fetch reports a false failure"
+        fi
+
+        integrity_changed_fixture="$test_temp_dir/remote-latest-changed.txt"
+        sed "s/# created_at=fixed-time/# created_at=changed-time/"             "$integrity_remote_fixture" > "$integrity_changed_fixture"
+        integrity_collision_root="$test_temp_dir/fetch collision"
+        mkdir -p "$integrity_collision_root/manifests"
+        integrity_fetch_with_downloader             "$integrity_collision_root/manifests" "$integrity_collision_root"             cp -- "$integrity_remote_fixture"
+        if integrity_fetch_with_downloader             "$integrity_collision_root/manifests" "$integrity_collision_root"             cp -- "$integrity_changed_fixture"; then
+            test_fail "Different timestamped content overwrites an existing reference"
+        elif cmp -s -- "$integrity_remote_fixture"             "$integrity_collision_root/manifests/integrity/remote/integrity-mocked.txt" &&
+            [ "$INTEGRITY_FETCH_ERROR_STAGE" = "timestamp publication" ]; then
+            test_pass "Different timestamped content fails without overwrite"
+        else
+            test_fail "Timestamp collision handling changed the protected reference"
+        fi
+
+        integrity_symlink_root="$test_temp_dir/fetch symlink"
+        mkdir -p "$integrity_symlink_root/manifests/integrity/remote"
+        ln -s "$integrity_remote_fixture"             "$integrity_symlink_root/manifests/integrity/remote/integrity-mocked.txt"
+        if integrity_fetch_with_downloader             "$integrity_symlink_root/manifests" "$integrity_symlink_root"             cp -- "$integrity_remote_fixture"; then
+            test_fail "Symlink timestamped target is accepted"
+        elif [ -L "$integrity_symlink_root/manifests/integrity/remote/integrity-mocked.txt" ] &&
+            [ "$INTEGRITY_FETCH_ERROR_STAGE" = "timestamp publication" ]; then
+            test_pass "Symlink timestamped target fails safely"
+        else
+            test_fail "Symlink timestamped target handling is unsafe"
+        fi
+
+        if integrity_fetch_with_downloader             "$integrity_fetch_root/manifests" "$integrity_fetch_root"             false; then
+            test_fail "Failed downloader is reported as success"
+        elif [ "$INTEGRITY_FETCH_ERROR_STAGE" = "remote fetch" ]; then
+            test_pass "Remote fetch failure identifies its stage"
+        else
+            test_fail "Remote fetch failure stage is unclear"
         fi
 
         if integrity_fetch_with_downloader \
             "$integrity_fetch_root/manifests" "$integrity_fetch_root" \
             cp -- "$test_temp_dir/malformed-integrity.txt"; then
             test_fail "Remote integrity fetch publishes malformed manifests"
+        elif [ "$INTEGRITY_FETCH_ERROR_STAGE" = "manifest validation" ]; then
+            test_pass "Remote integrity fetch rejects malformed manifests at validation"
         else
-            test_pass "Remote integrity fetch rejects malformed manifests"
+            test_fail "Malformed manifest failure stage is unclear"
         fi
 
         if integrity_manifest_root_safe "" "$integrity_fetch_root" ||

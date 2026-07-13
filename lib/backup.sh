@@ -69,6 +69,7 @@ verify_backup_destination() {
 
 generate_backup_inventory() {
     log_info "Generating inventory..."
+    local inventory_failed=0
 
     {
         echo "Project Phoenix Inventory"
@@ -80,12 +81,16 @@ generate_backup_inventory() {
         echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
     } > "$INVENTORY_DIR/summary.txt"
 
-    docker ps -a > "$INVENTORY_DIR/containers.txt" 2>&1
-    docker images > "$INVENTORY_DIR/images.txt" 2>&1
-    docker volume ls > "$INVENTORY_DIR/volumes.txt" 2>&1
-    docker network ls > "$INVENTORY_DIR/networks.txt" 2>&1
-    docker version > "$INVENTORY_DIR/docker-version.txt" 2>&1
-    docker info > "$INVENTORY_DIR/docker-info.txt" 2>&1
+    if [ -n "${EXPECTED_SERVICES:-}" ]; then
+        printf "%s\n" "$EXPECTED_SERVICES" > "$INVENTORY_DIR/expected-services.txt"
+    fi
+
+    docker ps -a > "$INVENTORY_DIR/containers.txt" 2>&1 || inventory_failed=1
+    docker images > "$INVENTORY_DIR/images.txt" 2>&1 || inventory_failed=1
+    docker volume ls > "$INVENTORY_DIR/volumes.txt" 2>&1 || inventory_failed=1
+    docker network ls > "$INVENTORY_DIR/networks.txt" 2>&1 || inventory_failed=1
+    docker version > "$INVENTORY_DIR/docker-version.txt" 2>&1 || inventory_failed=1
+    docker info > "$INVENTORY_DIR/docker-info.txt" 2>&1 || inventory_failed=1
 
     find "$SOURCE" \
         \( -name "docker-compose.yml" -o \
@@ -96,6 +101,7 @@ generate_backup_inventory() {
 
     du -sh "$SOURCE"/* > "$INVENTORY_DIR/source-folder-sizes.txt" 2>&1
 
+    [ "$inventory_failed" -eq 0 ] || { log_error "Inventory generation failed"; return 1; }
     log_success "Inventory PASS"
 }
 
@@ -151,11 +157,15 @@ run_backup_integrity_hook() {
 
 backup_set_outcome_status() {
     local copy_status
+    local metadata_status="${3:-success}"
 
     copy_status=$(backup_rsync_copy_status "$1")
     if [ "$copy_status" = "failure" ]; then
         BACKUP_HISTORY_STATUS="failed"
         BACKUP_HISTORY_DETAILS="Backup copy failed; integrity generation skipped"
+    elif [ "$metadata_status" = "failed" ]; then
+        BACKUP_HISTORY_STATUS="partial"
+        BACKUP_HISTORY_DETAILS="Backup payload copied; metadata publication failed at ${BACKUP_METADATA_STAGE:-unknown stage}; integrity=$2"
     elif [ "$2" = "success" ]; then
         if [ "$copy_status" = "warning" ]; then
             BACKUP_HISTORY_STATUS="completed-with-warnings"
@@ -194,6 +204,7 @@ write_backup_manifest() {
         echo "Backup Size: $BACKUP_SIZE"
         echo "Inventory: $INVENTORY_DIR"
         echo "Integrity Status: ${BACKUP_INTEGRITY_STATUS:-skipped}"
+        echo "Metadata Status: ${BACKUP_METADATA_STATUS:-skipped}"
         if [ -n "${INTEGRITY_REMOTE_REFERENCE_NAME:-}" ]; then
             echo "Integrity Reference: $INTEGRITY_REMOTE_REFERENCE_NAME"
         fi
@@ -220,7 +231,7 @@ write_backup_health_report() {
         if [ "$copy_status" = "warning" ]; then
             log_warning "Backup completed with rsync warnings" | tee -a "$LOGFILE"
         else
-            log_success "Backup PASS" | tee -a "$LOGFILE"
+            log_success "Backup Payload PASS" | tee -a "$LOGFILE"
         fi
         if [ "${BACKUP_INTEGRITY_STATUS:-failed}" = "success" ]; then
             log_success "Integrity Manifest PASS" | tee -a "$LOGFILE"
@@ -232,6 +243,10 @@ write_backup_health_report() {
         else
             log_warning "Integrity Manifest FAIL - backup data was copied" | tee -a "$LOGFILE"
             OVERALL="PROJECT PHOENIX READY WITH INTEGRITY WARNING"
+        fi
+        if [ "${BACKUP_METADATA_STATUS:-failed}" != "success" ]; then
+            log_warning "Metadata publication failed - backup payload remains usable" | tee -a "$LOGFILE"
+            OVERALL="PROJECT PHOENIX READY WITH METADATA WARNING"
         fi
         date > "$STATUS_DIR/last_success"
     else
@@ -247,6 +262,7 @@ write_backup_health_report() {
     echo "Duration    : ${DURATION} seconds" | tee -a "$LOGFILE"
     echo "Exit Code   : $RSYNC_EXIT" | tee -a "$LOGFILE"
     echo "Integrity   : ${BACKUP_INTEGRITY_STATUS:-skipped}" | tee -a "$LOGFILE"
+    echo "Metadata    : ${BACKUP_METADATA_STATUS:-skipped}" | tee -a "$LOGFILE"
     echo | tee -a "$LOGFILE"
 
     echo "=============================================================" | tee -a "$LOGFILE"
@@ -265,15 +281,24 @@ run_backup() {
     verify_backup_ssh || exit 1
     verify_backup_destination || exit 1
 
-    generate_backup_inventory
+    if generate_backup_inventory; then BACKUP_INVENTORY_STATUS="success"; else BACKUP_INVENTORY_STATUS="failed"; fi
     run_rsync_backup
+    if [ "$BACKUP_INVENTORY_STATUS" = "success" ]; then
+        if run_backup_metadata_hook "$RSYNC_EXIT"; then :; fi
+    else
+        BACKUP_METADATA_STATUS="failed"
+        BACKUP_METADATA_STAGE="inventory generation"
+    fi
     if run_backup_integrity_hook "$RSYNC_EXIT"; then
         :
     fi
-    backup_set_outcome_status "$RSYNC_EXIT" "$BACKUP_INTEGRITY_STATUS"
+    backup_set_outcome_status "$RSYNC_EXIT" "$BACKUP_INTEGRITY_STATUS" "$BACKUP_METADATA_STATUS"
     calculate_backup_stats
     write_backup_manifest
     write_backup_health_report
 
+    if [ "${BACKUP_METADATA_STATUS:-failed}" = "failed" ] && [ "$RSYNC_EXIT" -eq 0 ]; then
+        return 23
+    fi
     return "$RSYNC_EXIT"
 }

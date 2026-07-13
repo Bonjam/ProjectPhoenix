@@ -1,5 +1,11 @@
 #!/bin/bash
 
+integrity_remote_path_selected() {
+    case "$1" in
+        backup/manifests/integrity|backup/manifests/integrity/*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
 integrity_path_supported() {
     [[ "$1" != *$'\n'* && "$1" != *$'\t'* ]]
 }
@@ -132,29 +138,59 @@ integrity_store_local_remote_reference() {
     local reference_name="$2"
     local manifest_root="${3:-$MANIFEST_DIR}"
     local local_directory="$manifest_root/integrity/remote"
-    local latest_temporary
-    local timestamped_temporary
+    local timestamped_target="$local_directory/$reference_name"
+    local latest_target="$local_directory/latest.txt"
+    local latest_temporary=""
+    local timestamped_temporary=""
 
-    mkdir -p "$local_directory"
-    [ ! -e "$local_directory/$reference_name" ] || return 1
-    timestamped_temporary=$(mktemp "$local_directory/.integrity-copy.XXXXXX") || return 1
+    INTEGRITY_PUBLICATION_STAGE="timestamp publication"
+    mkdir -p "$local_directory" || return 1
+
+    if [ -L "$timestamped_target" ]; then
+        return 1
+    elif [ -e "$timestamped_target" ]; then
+        [ -f "$timestamped_target" ] || return 1
+        cmp -s -- "$source_manifest" "$timestamped_target" || return 1
+    else
+        timestamped_temporary=$(mktemp "$local_directory/.integrity-copy.XXXXXX") || return 1
+        if ! cp -- "$source_manifest" "$timestamped_temporary"; then
+            rm -f -- "$timestamped_temporary"
+            return 1
+        fi
+        if ln -- "$timestamped_temporary" "$timestamped_target" 2>/dev/null; then
+            rm -f -- "$timestamped_temporary"
+        else
+            rm -f -- "$timestamped_temporary"
+            if [ -L "$timestamped_target" ] || [ ! -f "$timestamped_target" ] ||
+                ! cmp -s -- "$source_manifest" "$timestamped_target"; then
+                return 1
+            fi
+        fi
+    fi
+
+    INTEGRITY_PUBLICATION_STAGE="latest publication"
+    if [ -L "$latest_target" ] || [ -e "$latest_target" ]; then
+        if [ -f "$latest_target" ] && [ ! -L "$latest_target" ] &&
+            cmp -s -- "$source_manifest" "$latest_target"; then
+            INTEGRITY_PUBLICATION_STAGE=""
+            return 0
+        fi
+        [ ! -d "$latest_target" ] || {
+            return 1
+        }
+    fi
+
     latest_temporary=$(mktemp "$local_directory/.integrity-latest.XXXXXX") || {
-        rm -f -- "$timestamped_temporary"
         return 1
     }
-    if ! cp -- "$source_manifest" "$timestamped_temporary" ||
-        ! cp -- "$source_manifest" "$latest_temporary"; then
-        rm -f -- "$timestamped_temporary" "$latest_temporary"
+    if ! cp -- "$source_manifest" "$latest_temporary" ||
+        ! mv -fT -- "$latest_temporary" "$latest_target"; then
+        rm -f -- "$latest_temporary"
         return 1
     fi
-    if ! mv -- "$timestamped_temporary" "$local_directory/$reference_name"; then
-        rm -f -- "$timestamped_temporary" "$latest_temporary"
-        return 1
-    fi
-    if ! mv -f -- "$latest_temporary" "$local_directory/latest.txt"; then
-        rm -f -- "$local_directory/$reference_name" "$latest_temporary"
-        return 1
-    fi
+    [ -f "$latest_target" ] && [ ! -L "$latest_target" ] &&
+        cmp -s -- "$source_manifest" "$latest_target" || return 1
+    INTEGRITY_PUBLICATION_STAGE=""
 }
 
 integrity_manifest_root_safe() {
@@ -192,6 +228,8 @@ integrity_publish_downloaded_remote_reference() {
     # shellcheck disable=SC2034 # Nameref outputs validate the fetched manifest.
     local -A fetched_file_sizes=() fetched_file_hashes=() fetched_links=()
 
+    INTEGRITY_FETCH_ERROR_STAGE="manifest validation"
+    INTEGRITY_PUBLICATION_STAGE=""
     integrity_manifest_root_safe "$manifest_root" "$workspace_root" || return 1
     integrity_load_manifest "$downloaded_manifest" \
         fetched_file_sizes fetched_file_hashes fetched_links || return 1
@@ -203,6 +241,7 @@ integrity_publish_downloaded_remote_reference() {
     integrity_reference_name_safe "$reference_name" || return 1
     integrity_store_local_remote_reference \
         "$downloaded_manifest" "$reference_name" "$manifest_root" || return 1
+    INTEGRITY_FETCH_ERROR_STAGE=""
     # shellcheck disable=SC2034 # Consumed by fetch command reporting and tests.
     INTEGRITY_FETCHED_REFERENCE_NAME="$reference_name"
 }
@@ -214,15 +253,20 @@ integrity_fetch_with_downloader() {
     local downloaded_manifest
 
     shift 3
+    INTEGRITY_FETCH_ERROR_STAGE="manifest validation"
     integrity_manifest_root_safe "$manifest_root" "$workspace_root" || return 1
     INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-integrity-fetch.XXXXXX") || return 1
     trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
     downloaded_manifest="$INTEGRITY_TEMP_DIR/latest.txt"
+    INTEGRITY_FETCH_ERROR_STAGE="remote fetch"
     if ! "$downloader" "$@" "$downloaded_manifest"; then
         return 1
     fi
-    integrity_publish_downloaded_remote_reference \
-        "$downloaded_manifest" "$manifest_root" "$workspace_root" || return 1
+    if ! integrity_publish_downloaded_remote_reference \
+        "$downloaded_manifest" "$manifest_root" "$workspace_root"; then
+        INTEGRITY_FETCH_ERROR_STAGE="${INTEGRITY_PUBLICATION_STAGE:-$INTEGRITY_FETCH_ERROR_STAGE}"
+        return 1
+    fi
     rm -rf -- "$INTEGRITY_TEMP_DIR"
     trap - EXIT HUP INT TERM
 }
@@ -399,7 +443,7 @@ run_integrity_fetch_remote() {
     }
     if ! integrity_fetch_with_downloader \
         "$MANIFEST_DIR" "$PROJECT_ROOT" integrity_download_remote_reference; then
-        log_error "Remote integrity fetch or local publication failed"
+        log_error "Integrity fetch failed during: ${INTEGRITY_FETCH_ERROR_STAGE:-unknown stage}"
         return 1
     fi
     log_success "Remote integrity reference fetched"

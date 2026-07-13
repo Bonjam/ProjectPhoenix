@@ -1,0 +1,17 @@
+# Project Phoenix exclusions
+#
+# Keep this file tracked so backup operations always have a valid exclude file.
+# Add environment-specific exclusions only when they are safe to share.
+
+# Common temporary and cache content
+**/cache/**
+**/tmp/**
+**/temp/**
+
+# Logs
+**/*.log
+**/logs/**
+
+# Runtime and lock files
+**/*.pid
+**/*.lock
