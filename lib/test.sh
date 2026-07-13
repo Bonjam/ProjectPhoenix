@@ -22,6 +22,8 @@ run_tests() {
     local integrity_manifest_two
     local integrity_scenario
     local remote_reference_directory
+    local integrity_fetch_root
+    local integrity_remote_fixture
 
     section "PROJECT PHOENIX TESTS"
 
@@ -54,6 +56,7 @@ run_tests() {
     if declare -F run_integrity_verify >/dev/null 2>&1; then test_pass "Integrity-verify command function exists"; else test_fail "Integrity-verify command function missing"; fi
     if declare -F integrity_generate_remote_reference >/dev/null 2>&1; then test_pass "Automatic remote integrity function exists"; else test_fail "Automatic remote integrity function missing"; fi
     if declare -F run_integrity_verify_remote >/dev/null 2>&1; then test_pass "Integrity-verify-remote command function exists"; else test_fail "Integrity-verify-remote command function missing"; fi
+    if declare -F run_integrity_fetch_remote >/dev/null 2>&1; then test_pass "Integrity-fetch-remote command function exists"; else test_fail "Integrity-fetch-remote command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -400,6 +403,47 @@ Total transferred file size: 4,096 bytes"
             test_pass "Remote latest integrity reference is copied safely"
         else
             test_fail "Remote latest integrity reference is not a safe copy"
+        fi
+
+        integrity_fetch_root="$test_temp_dir/fetch project"
+        integrity_remote_fixture="$test_temp_dir/remote-latest.txt"
+        mkdir -p "$integrity_fetch_root/manifests"
+        sed "/^# created_at=/a # reference_file=integrity-mocked.txt" \
+            "$integrity_manifest_one" > "$integrity_remote_fixture"
+        if integrity_fetch_with_downloader \
+            "$integrity_fetch_root/manifests" "$integrity_fetch_root" \
+            cp -- "$integrity_remote_fixture" &&
+            [ -f "$integrity_fetch_root/manifests/integrity/remote/integrity-mocked.txt" ] &&
+            [ -f "$integrity_fetch_root/manifests/integrity/remote/latest.txt" ] &&
+            [ ! -L "$integrity_fetch_root/manifests/integrity/remote/latest.txt" ]; then
+            test_pass "Mocked remote integrity fetch publishes validated copies"
+        else
+            test_fail "Mocked remote integrity fetch failed"
+        fi
+
+        if integrity_fetch_with_downloader \
+            "$integrity_fetch_root/manifests" "$integrity_fetch_root" \
+            cp -- "$integrity_remote_fixture"; then
+            test_fail "Remote integrity fetch replaces timestamped references"
+        else
+            test_pass "Remote integrity fetch preserves existing timestamped references"
+        fi
+
+        if integrity_fetch_with_downloader \
+            "$integrity_fetch_root/manifests" "$integrity_fetch_root" \
+            cp -- "$test_temp_dir/malformed-integrity.txt"; then
+            test_fail "Remote integrity fetch publishes malformed manifests"
+        else
+            test_pass "Remote integrity fetch rejects malformed manifests"
+        fi
+
+        if integrity_manifest_root_safe "" "$integrity_fetch_root" ||
+            integrity_manifest_root_safe / "$integrity_fetch_root" ||
+            integrity_manifest_root_safe /integrity "$integrity_fetch_root" ||
+            integrity_manifest_root_safe "$test_temp_dir/outside" "$integrity_fetch_root"; then
+            test_fail "Remote integrity fetch accepts unsafe manifest roots"
+        else
+            test_pass "Remote integrity fetch rejects unsafe manifest roots"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.

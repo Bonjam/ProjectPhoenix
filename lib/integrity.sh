@@ -147,8 +147,96 @@ integrity_store_local_remote_reference() {
         rm -f -- "$timestamped_temporary" "$latest_temporary"
         return 1
     fi
-    mv -- "$timestamped_temporary" "$local_directory/$reference_name"
-    mv -f -- "$latest_temporary" "$local_directory/latest.txt"
+    if ! mv -- "$timestamped_temporary" "$local_directory/$reference_name"; then
+        rm -f -- "$timestamped_temporary" "$latest_temporary"
+        return 1
+    fi
+    if ! mv -f -- "$latest_temporary" "$local_directory/latest.txt"; then
+        rm -f -- "$local_directory/$reference_name" "$latest_temporary"
+        return 1
+    fi
+}
+
+integrity_manifest_root_safe() {
+    local manifest_root="$1"
+    local workspace_root="$2"
+    local normalized_root="${manifest_root%/}"
+    local resolved_manifest_root
+    local resolved_workspace_root
+
+    [ -n "$manifest_root" ] || return 1
+    case "$normalized_root" in
+        ""|/|/integrity) return 1 ;;
+    esac
+    resolved_workspace_root=$(readlink -f -- "$workspace_root") || return 1
+    resolved_manifest_root=$(readlink -m -- "$manifest_root") || return 1
+    case "$resolved_manifest_root" in
+        "$resolved_workspace_root"/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+integrity_reference_name_safe() {
+    local reference_name="$1"
+    integrity_path_supported "$reference_name" &&
+        [ "${reference_name##*/}" = "$reference_name" ] &&
+        [[ "$reference_name" == integrity-*.txt ]]
+}
+
+integrity_publish_downloaded_remote_reference() {
+    local downloaded_manifest="$1"
+    local manifest_root="$2"
+    local workspace_root="$3"
+    local reference_name
+    local -a reference_names=()
+    # shellcheck disable=SC2034 # Nameref outputs validate the fetched manifest.
+    local -A fetched_file_sizes=() fetched_file_hashes=() fetched_links=()
+
+    integrity_manifest_root_safe "$manifest_root" "$workspace_root" || return 1
+    integrity_load_manifest "$downloaded_manifest" \
+        fetched_file_sizes fetched_file_hashes fetched_links || return 1
+    mapfile -t reference_names < <(
+        sed -n "s/^# reference_file=//p" "$downloaded_manifest"
+    )
+    [ "${#reference_names[@]}" -eq 1 ] || return 1
+    reference_name="${reference_names[0]}"
+    integrity_reference_name_safe "$reference_name" || return 1
+    integrity_store_local_remote_reference \
+        "$downloaded_manifest" "$reference_name" "$manifest_root" || return 1
+    # shellcheck disable=SC2034 # Consumed by fetch command reporting and tests.
+    INTEGRITY_FETCHED_REFERENCE_NAME="$reference_name"
+}
+
+integrity_fetch_with_downloader() {
+    local manifest_root="$1"
+    local workspace_root="$2"
+    local downloader="$3"
+    local downloaded_manifest
+
+    shift 3
+    integrity_manifest_root_safe "$manifest_root" "$workspace_root" || return 1
+    INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-integrity-fetch.XXXXXX") || return 1
+    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    downloaded_manifest="$INTEGRITY_TEMP_DIR/latest.txt"
+    if ! "$downloader" "$@" "$downloaded_manifest"; then
+        return 1
+    fi
+    integrity_publish_downloaded_remote_reference \
+        "$downloaded_manifest" "$manifest_root" "$workspace_root" || return 1
+    rm -rf -- "$INTEGRITY_TEMP_DIR"
+    trap - EXIT HUP INT TERM
+}
+
+integrity_download_remote_reference() {
+    local output_file="$1"
+
+    ssh_run_read_only_destination_script \
+        "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" "$DESTINATION" \
+        accept-new > "$output_file" <<\REMOTE_FETCH
+manifest_file="${destination%/}/backup/manifests/integrity/latest.txt"
+[ -f "$manifest_file" ] || exit 1
+cat "$manifest_file"
+REMOTE_FETCH
 }
 
 integrity_generate_remote_reference() {
@@ -226,7 +314,10 @@ REMOTE_INTEGRITY
     reference_name=$(sed -n "s/^# reference_file=//p" "$local_manifest" | head -n 1)
     [ -n "$reference_name" ] || return 1
     integrity_load_manifest "$local_manifest" remote_file_sizes remote_file_hashes remote_links || return 1
-    integrity_store_local_remote_reference "$local_manifest" "$reference_name"
+    if ! integrity_store_local_remote_reference "$local_manifest" "$reference_name"; then
+        log_error "Local remote-reference publication failed"
+        return 1
+    fi
     # shellcheck disable=SC2034 # Consumed by backup metadata and reporting.
     INTEGRITY_REMOTE_REFERENCE_NAME="$reference_name"
     rm -rf -- "$INTEGRITY_TEMP_DIR"
@@ -288,4 +379,30 @@ run_integrity_verify() {
 
 run_integrity_verify_remote() {
     run_integrity_verify "$MANIFEST_DIR/integrity/remote/latest.txt"
+}
+
+run_integrity_fetch_remote() {
+    validate_config || return 1
+    section "PROJECT PHOENIX REMOTE INTEGRITY FETCH"
+    phoenix_init_dirs
+    integrity_manifest_root_safe "$MANIFEST_DIR" "$PROJECT_ROOT" || {
+        log_error "MANIFEST_DIR is empty, unsafe, or outside PROJECT_ROOT"
+        return 1
+    }
+    ssh_key_exists "$SSH_KEY" || {
+        log_error "Configured SSH key file does not exist"
+        return 1
+    }
+    ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new || {
+        log_error "SSH connection failed"
+        return 1
+    }
+    if ! integrity_fetch_with_downloader \
+        "$MANIFEST_DIR" "$PROJECT_ROOT" integrity_download_remote_reference; then
+        log_error "Remote integrity fetch or local publication failed"
+        return 1
+    fi
+    log_success "Remote integrity reference fetched"
+    echo "Reference: $INTEGRITY_FETCHED_REFERENCE_NAME"
+    echo "Latest   : $MANIFEST_DIR/integrity/remote/latest.txt"
 }
