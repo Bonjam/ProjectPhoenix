@@ -31,6 +31,7 @@ run_tests() {
     local retention_index
     local cleanup_directory cleanup_changed_directory cleanup_script cleanup_result
     local -a cleanup_expected=() cleanup_changed_expected=()
+    local health_now health_remote_fixture
 
     section "PROJECT PHOENIX TESTS"
 
@@ -66,6 +67,7 @@ run_tests() {
     if declare -F run_integrity_fetch_remote >/dev/null 2>&1; then test_pass "Integrity-fetch-remote command function exists"; else test_fail "Integrity-fetch-remote command function missing"; fi
     if declare -F run_integrity_retention >/dev/null 2>&1; then test_pass "Integrity-retention command function exists"; else test_fail "Integrity-retention command function missing"; fi
     if declare -F run_integrity_cleanup >/dev/null 2>&1; then test_pass "Integrity-cleanup command function exists"; else test_fail "Integrity-cleanup command function missing"; fi
+    if declare -F run_health >/dev/null 2>&1; then test_pass "Health command function exists"; else test_fail "Health command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -606,6 +608,116 @@ Total transferred file size: 4,096 bytes"
             test_pass "Integrity cleanup distinguishes failed and partial outcomes"
         else
             test_fail "Integrity cleanup failure status is incorrect"
+        fi
+
+        unset HEALTH_BACKUP_WARNING_HOURS HEALTH_INTEGRITY_WARNING_HOURS HEALTH_REMOTE_USAGE_WARNING_PERCENT
+        health_resolve_thresholds
+        if [ "$HEALTH_BACKUP_HOURS" = 48 ] && [ "$HEALTH_INTEGRITY_HOURS" = 48 ] &&
+            [ "$HEALTH_USAGE_PERCENT" = 85 ]; then
+            test_pass "Health defaults are applied"
+        else
+            test_fail "Health defaults are incorrect"
+        fi
+
+        # shellcheck disable=SC2034 # Fixtures consumed by health_resolve_thresholds.
+        HEALTH_BACKUP_WARNING_HOURS=24
+        HEALTH_INTEGRITY_WARNING_HOURS=36
+        HEALTH_REMOTE_USAGE_WARNING_PERCENT=90
+        health_resolve_thresholds
+        if [ "$HEALTH_BACKUP_HOURS" = 24 ] && [ "$HEALTH_INTEGRITY_HOURS" = 36 ] &&
+            [ "$HEALTH_USAGE_PERCENT" = 90 ]; then
+            test_pass "Health valid thresholds are honoured"
+        else
+            test_fail "Health valid thresholds are ignored"
+        fi
+
+        # shellcheck disable=SC2034 # Fixtures consumed by health_resolve_thresholds.
+        HEALTH_BACKUP_WARNING_HOURS=invalid
+        # shellcheck disable=SC2034 # Fixture consumed by health_resolve_thresholds.
+        HEALTH_INTEGRITY_WARNING_HOURS=0
+        # shellcheck disable=SC2034 # Fixture consumed by health_resolve_thresholds.
+        HEALTH_REMOTE_USAGE_WARNING_PERCENT=101
+        health_resolve_thresholds
+        if [ "$HEALTH_BACKUP_HOURS" = 48 ] && [ "$HEALTH_INTEGRITY_HOURS" = 48 ] &&
+            [ "$HEALTH_USAGE_PERCENT" = 85 ]; then
+            test_pass "Health invalid thresholds fall back safely"
+        else
+            test_fail "Health invalid thresholds are accepted"
+        fi
+
+        health_now=$(date -d "2026-07-13 12:00:00" +%s)
+        if [ "$(health_age_hours "2026-07-13 11:00:00" "$health_now")" = 1 ] &&
+            ! health_age_warns 1 48; then
+            test_pass "Recent backup and integrity ages pass"
+        else
+            test_fail "Recent health ages warn incorrectly"
+        fi
+        if health_age_warns 49 48; then
+            test_pass "Old backup and integrity ages warn"
+        else
+            test_fail "Old health ages do not warn"
+        fi
+        if health_usage_warns 85 85; then
+            test_pass "High filesystem usage warns"
+        else
+            test_fail "High filesystem usage does not warn"
+        fi
+
+        health_remote_fixture="destination_exists=yes
+destination_readable=yes
+filesystem=/dev/mock
+filesystem_total_kb=1000
+filesystem_used_kb=850
+filesystem_available_kb=150
+filesystem_usage=85
+backup_size=1G
+top_level_entries=3
+recovery_guide=yes
+inventory=yes
+integrity_directory=yes
+integrity_newest=integrity-20260713-010000.txt
+integrity_count=7
+integrity_retained=5
+integrity_eligible=2
+integrity_suspicious=0
+remote_latest_status=regular file
+remote_latest_matches=yes"
+        if health_parse_remote_analysis "$health_remote_fixture" &&
+            [ "$HEALTH_REMOTE_ELIGIBLE" = 2 ]; then
+            test_pass "Mocked health SSH output parses without contacting the Pi"
+        else
+            test_fail "Mocked health SSH output parsing failed"
+        fi
+
+        if ! health_remote_checks_pass no yes yes; then
+            test_pass "Health classifies SSH failure as failed"
+        else
+            test_fail "Health accepts an SSH failure"
+        fi
+        if ! health_remote_checks_pass yes no no; then
+            test_pass "Health classifies a missing destination as failed"
+        else
+            test_fail "Health accepts a missing destination"
+        fi
+        if health_latest_mismatch_warns no yes yes; then
+            test_pass "Health latest mismatch warns"
+        else
+            test_fail "Health latest mismatch does not warn"
+        fi
+        if health_retention_warns 2; then
+            test_pass "Health retention eligibility warns"
+        else
+            test_fail "Health retention eligibility does not warn"
+        fi
+        if ! health_required_flags_pass yes yes no yes; then
+            test_pass "Health fails when a required restore command is missing"
+        else
+            test_fail "Health accepts a missing restore command"
+        fi
+        if health_source_path_safe "$test_temp_dir/source path with spaces"; then
+            test_pass "Health path checks support spaces"
+        else
+            test_fail "Health path checks reject spaces"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.

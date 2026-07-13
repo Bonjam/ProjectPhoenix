@@ -63,6 +63,11 @@ case "$COMMAND" in
         show_history
         ;;
 
+    health)
+        show_banner
+        run_health
+        ;;
+
     html-report)
         show_banner
         generate_html_report
