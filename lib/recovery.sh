@@ -78,6 +78,8 @@ recovery_analyse_local_directory() {
     printf "inventory=%s\n" "$inventory"
     printf "manifest=%s\n" "$manifest"
     printf "restore_guide=%s\n" "$restore_guide"
+    printf "integrity_manifest=%s\n" "not found"
+    printf "integrity_reference=%s\n" "not available"
 }
 
 recovery_parse_analysis() {
@@ -92,6 +94,8 @@ recovery_parse_analysis() {
     RECOVERY_INVENTORY=""
     RECOVERY_MANIFEST=""
     RECOVERY_RESTORE_GUIDE=""
+    RECOVERY_INTEGRITY_MANIFEST=""
+    RECOVERY_INTEGRITY_REFERENCE=""
 
     while IFS="=" read -r key value; do
         case "$key" in
@@ -102,6 +106,8 @@ recovery_parse_analysis() {
             inventory) RECOVERY_INVENTORY="$value" ;;
             manifest) RECOVERY_MANIFEST="$value" ;;
             restore_guide) RECOVERY_RESTORE_GUIDE="$value" ;;
+            integrity_manifest) RECOVERY_INTEGRITY_MANIFEST="$value" ;;
+            integrity_reference) RECOVERY_INTEGRITY_REFERENCE="$value" ;;
         esac
     done <<< "$analysis"
 
@@ -110,7 +116,8 @@ recovery_parse_analysis() {
         [[ "$RECOVERY_COMPOSE_FILES" =~ ^[0-9]+$ ]] &&
         [[ "$RECOVERY_INVENTORY" =~ ^(found|not\ found)$ ]] &&
         [[ "$RECOVERY_MANIFEST" =~ ^(found|not\ found)$ ]] &&
-        [[ "$RECOVERY_RESTORE_GUIDE" =~ ^(found|not\ found)$ ]]
+        [[ "$RECOVERY_RESTORE_GUIDE" =~ ^(found|not\ found)$ ]] &&
+        [[ "$RECOVERY_INTEGRITY_MANIFEST" =~ ^(found|not\ found)$ ]]
 }
 
 recovery_remote_analysis() {
@@ -125,6 +132,8 @@ set -u
 inventory="not found"
 manifest="not found"
 restore_guide="not found"
+integrity_manifest="not found"
+integrity_reference="not available"
 
 if find "$destination" \( -type d -iname inventory -o -type f -iname "*inventory*" \) -print -quit 2>/dev/null | grep -q .; then
     inventory="found"
@@ -134,6 +143,12 @@ if find "$destination" \( -type d -iname manifests -o -type f -iname "*manifest*
 fi
 if find "$destination" -type f \( -iname "restore*.md" -o -iname "restore*.txt" -o -iname "recovery*.md" -o -iname "recovery*.txt" -o -ipath "*/restore/README.md" -o -ipath "*/restore/README.txt" -o -ipath "*/recovery/README.md" -o -ipath "*/recovery/README.txt" -o -ipath "*/disaster-recovery/README.md" -o -ipath "*/disaster-recovery/README.txt" \) -print -quit 2>/dev/null | grep -q .; then
     restore_guide="found"
+fi
+integrity_directory="${destination%/}/backup/manifests/integrity"
+if [ -f "$integrity_directory/latest.txt" ]; then
+    integrity_manifest="found"
+    integrity_reference=$(find "$integrity_directory" -maxdepth 1 -type f -name "integrity-*.txt" -printf "%f\n" 2>/dev/null | LC_ALL=C sort | tail -n 1)
+    [ -n "$integrity_reference" ] || integrity_reference="latest.txt"
 fi
 
 backup_size=$(du -sh -- "$destination" 2>/dev/null | awk "{print \$1}") || exit 1
@@ -166,6 +181,8 @@ fi
 printf "inventory=%s\n" "$inventory"
 printf "manifest=%s\n" "$manifest"
 printf "restore_guide=%s\n" "$restore_guide"
+printf "integrity_manifest=%s\n" "$integrity_manifest"
+printf "integrity_reference=%s\n" "$integrity_reference"
 REMOTE_ANALYSIS
 }
 
@@ -221,6 +238,8 @@ run_recovery() {
     printf "%-18s: %s\n" "Inventory" "$RECOVERY_INVENTORY"
     printf "%-18s: %s\n" "Manifest" "$RECOVERY_MANIFEST"
     printf "%-18s: %s\n" "Restore Guide" "$RECOVERY_RESTORE_GUIDE"
+    printf "%-18s: %s\n" "Integrity Manifest" "$RECOVERY_INTEGRITY_MANIFEST"
+    printf "%-18s: %s\n" "Integrity Reference" "$RECOVERY_INTEGRITY_REFERENCE"
     echo
     echo "Compose Projects"
     echo "----------------"

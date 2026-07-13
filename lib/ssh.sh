@@ -77,3 +77,18 @@ ssh_run_read_only_destination_script() {
         "${user}@${host}" \
         "IFS= read -r destination; export destination; sh -s"
 }
+
+ssh_run_destination_script() {
+    local key_file="$1"
+    local user="$2"
+    local host="$3"
+    local destination="$4"
+    local strict_host_key_checking="${5:-accept-new}"
+    {
+        printf "%s\n" "$destination"
+        cat
+    } | ssh -i "$key_file" -o BatchMode=yes -o ConnectTimeout=8 \
+        -o "StrictHostKeyChecking=$strict_host_key_checking" \
+        "${user}@${host}" \
+        "IFS= read -r destination; export destination; bash -s"
+}

@@ -21,7 +21,9 @@ case "$COMMAND" in
     backup)
         show_banner
         run_backup
-        write_history_entry "backup" "completed" "Backup engine executed"
+        write_history_entry "backup" \
+            "${BACKUP_HISTORY_STATUS:-completed}" \
+            "${BACKUP_HISTORY_DETAILS:-Backup engine executed}"
         ;;
 
     banner)
@@ -80,6 +82,11 @@ case "$COMMAND" in
     integrity-verify)
         show_banner
         run_integrity_verify "${2:-}"
+        ;;
+
+    integrity-verify-remote)
+        show_banner
+        run_integrity_verify_remote
         ;;
 
     inventory)

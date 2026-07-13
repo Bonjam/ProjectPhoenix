@@ -119,6 +119,62 @@ run_rsync_backup() {
     DURATION=$((END - START))
 }
 
+backup_rsync_copy_status() {
+    case "$1" in
+        0) printf "%s\n" "clean" ;;
+        23) printf "%s\n" "warning" ;;
+        *) printf "%s\n" "failure" ;;
+    esac
+}
+
+backup_rsync_copy_usable() {
+    [ "$(backup_rsync_copy_status "$1")" != "failure" ]
+}
+
+run_backup_integrity_hook() {
+    local rsync_exit_code="$1"
+    local generator="${2:-integrity_generate_remote_reference}"
+
+    if ! backup_rsync_copy_usable "$rsync_exit_code"; then
+        BACKUP_INTEGRITY_STATUS="skipped"
+        return 0
+    fi
+
+    if "$generator"; then
+        BACKUP_INTEGRITY_STATUS="success"
+        return 0
+    fi
+
+    BACKUP_INTEGRITY_STATUS="failed"
+    return 1
+}
+
+backup_set_outcome_status() {
+    local copy_status
+
+    copy_status=$(backup_rsync_copy_status "$1")
+    if [ "$copy_status" = "failure" ]; then
+        BACKUP_HISTORY_STATUS="failed"
+        BACKUP_HISTORY_DETAILS="Backup copy failed; integrity generation skipped"
+    elif [ "$2" = "success" ]; then
+        if [ "$copy_status" = "warning" ]; then
+            BACKUP_HISTORY_STATUS="completed-with-warnings"
+            BACKUP_HISTORY_DETAILS="Backup copied with rsync warnings; remote integrity manifest completed"
+        else
+            BACKUP_HISTORY_STATUS="completed"
+            BACKUP_HISTORY_DETAILS="Backup copied cleanly; remote integrity manifest completed"
+        fi
+    elif [ "$copy_status" = "warning" ]; then
+        BACKUP_HISTORY_STATUS="partial"
+        BACKUP_HISTORY_DETAILS="Backup copied with rsync warnings; integrity generation failed"
+    else
+        # shellcheck disable=SC2034 # Consumed by launcher history and tests.
+        BACKUP_HISTORY_STATUS="partial"
+        # shellcheck disable=SC2034 # Consumed by launcher history and tests.
+        BACKUP_HISTORY_DETAILS="Backup copied cleanly; integrity generation failed"
+    fi
+}
+
 calculate_backup_stats() {
     BACKUP_SIZE=$(ssh -i "$SSH_KEY" "${BACKUP_USER}@${BACKUP_HOST}" "du -sh '$DESTINATION' | awk '{print \$1}'" 2>/dev/null || echo "unknown")
     SOURCE_SIZE=$(du -sh "$SOURCE" | awk '{print $1}')
@@ -137,10 +193,17 @@ write_backup_manifest() {
         echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
         echo "Backup Size: $BACKUP_SIZE"
         echo "Inventory: $INVENTORY_DIR"
+        echo "Integrity Status: ${BACKUP_INTEGRITY_STATUS:-skipped}"
+        if [ -n "${INTEGRITY_REMOTE_REFERENCE_NAME:-}" ]; then
+            echo "Integrity Reference: $INTEGRITY_REMOTE_REFERENCE_NAME"
+        fi
     } > "$MANIFEST"
 }
 
 write_backup_health_report() {
+    local copy_status
+
+    copy_status=$(backup_rsync_copy_status "$RSYNC_EXIT")
     echo | tee -a "$LOGFILE"
     echo "=============================================================" | tee -a "$LOGFILE"
     echo "              PROJECT PHOENIX HEALTH REPORT" | tee -a "$LOGFILE"
@@ -153,9 +216,23 @@ write_backup_health_report() {
         log_error "Inventory FAIL" | tee -a "$LOGFILE"
     fi
 
-    if [ "$RSYNC_EXIT" -eq 0 ]; then
-        log_success "Backup PASS" | tee -a "$LOGFILE"
-        OVERALL="PROJECT PHOENIX READY"
+    if [ "$copy_status" != "failure" ]; then
+        if [ "$copy_status" = "warning" ]; then
+            log_warning "Backup completed with rsync warnings" | tee -a "$LOGFILE"
+        else
+            log_success "Backup PASS" | tee -a "$LOGFILE"
+        fi
+        if [ "${BACKUP_INTEGRITY_STATUS:-failed}" = "success" ]; then
+            log_success "Integrity Manifest PASS" | tee -a "$LOGFILE"
+            if [ "$copy_status" = "warning" ]; then
+                OVERALL="PROJECT PHOENIX READY WITH RSYNC WARNINGS"
+            else
+                OVERALL="PROJECT PHOENIX READY"
+            fi
+        else
+            log_warning "Integrity Manifest FAIL - backup data was copied" | tee -a "$LOGFILE"
+            OVERALL="PROJECT PHOENIX READY WITH INTEGRITY WARNING"
+        fi
         date > "$STATUS_DIR/last_success"
     else
         log_error "Backup FAIL" | tee -a "$LOGFILE"
@@ -169,6 +246,7 @@ write_backup_health_report() {
     echo "Backup Size : $BACKUP_SIZE" | tee -a "$LOGFILE"
     echo "Duration    : ${DURATION} seconds" | tee -a "$LOGFILE"
     echo "Exit Code   : $RSYNC_EXIT" | tee -a "$LOGFILE"
+    echo "Integrity   : ${BACKUP_INTEGRITY_STATUS:-skipped}" | tee -a "$LOGFILE"
     echo | tee -a "$LOGFILE"
 
     echo "=============================================================" | tee -a "$LOGFILE"
@@ -189,6 +267,10 @@ run_backup() {
 
     generate_backup_inventory
     run_rsync_backup
+    if run_backup_integrity_hook "$RSYNC_EXIT"; then
+        :
+    fi
+    backup_set_outcome_status "$RSYNC_EXIT" "$BACKUP_INTEGRITY_STATUS"
     calculate_backup_stats
     write_backup_manifest
     write_backup_health_report

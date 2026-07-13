@@ -127,6 +127,112 @@ integrity_validate_source() {
     [ -d "$SOURCE" ] && restore_target_is_safe "$SOURCE" "$PROJECT_ROOT" && restore_local_target_accessible "$SOURCE"
 }
 
+integrity_store_local_remote_reference() {
+    local source_manifest="$1"
+    local reference_name="$2"
+    local manifest_root="${3:-$MANIFEST_DIR}"
+    local local_directory="$manifest_root/integrity/remote"
+    local latest_temporary
+    local timestamped_temporary
+
+    mkdir -p "$local_directory"
+    [ ! -e "$local_directory/$reference_name" ] || return 1
+    timestamped_temporary=$(mktemp "$local_directory/.integrity-copy.XXXXXX") || return 1
+    latest_temporary=$(mktemp "$local_directory/.integrity-latest.XXXXXX") || {
+        rm -f -- "$timestamped_temporary"
+        return 1
+    }
+    if ! cp -- "$source_manifest" "$timestamped_temporary" ||
+        ! cp -- "$source_manifest" "$latest_temporary"; then
+        rm -f -- "$timestamped_temporary" "$latest_temporary"
+        return 1
+    fi
+    mv -- "$timestamped_temporary" "$local_directory/$reference_name"
+    mv -f -- "$latest_temporary" "$local_directory/latest.txt"
+}
+
+integrity_generate_remote_reference() {
+    local local_manifest reference_name
+    # shellcheck disable=SC2034 # Nameref outputs validate the downloaded manifest.
+    local -A remote_file_sizes=() remote_file_hashes=() remote_links=()
+    INTEGRITY_TEMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/project-phoenix-remote-integrity.XXXXXX") || return 1
+    trap 'rm -rf -- "$INTEGRITY_TEMP_DIR"' EXIT HUP INT TERM
+    local_manifest="$INTEGRITY_TEMP_DIR/remote-manifest.txt"
+    if ! ssh_run_destination_script "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" \
+        "$DESTINATION" accept-new > "$local_manifest" <<\REMOTE_INTEGRITY
+set -uo pipefail
+command -v sha256sum >/dev/null 2>&1 || {
+    echo "sha256sum is not installed on the remote host" >&2
+    exit 10
+}
+integrity_directory="${destination%/}/backup/manifests/integrity"
+mkdir -p "$integrity_directory" || exit 1
+timestamp=$(date +%Y%m%d-%H%M%S)
+reference_name="integrity-$timestamp.txt"
+temporary_manifest=$(mktemp "$integrity_directory/.integrity-temp.XXXXXX") || exit 1
+records_file=$(mktemp "$integrity_directory/.integrity-records.XXXXXX") || exit 1
+latest_temporary=""
+cleanup() { rm -f -- "$temporary_manifest" "$records_file" "$latest_temporary"; }
+trap cleanup EXIT HUP INT TERM
+find "${destination%/}" -path "$integrity_directory" -prune -o \
+    \( -type f -o -type l \) -print0 2>/dev/null |
+    LC_ALL=C sort -z |
+    while IFS= read -r -d "" entry; do
+        relative_path=${entry#"${destination%/}"/}
+        case "$relative_path" in *$'\t'*|*$'\n'*) exit 20 ;; esac
+        if [ -L "$entry" ]; then
+            link_target=$(readlink -- "$entry") || exit 1
+            case "$link_target" in *$'\t'*|*$'\n'*) exit 20 ;; esac
+            printf "L\t%s\t%s\n" "$relative_path" "$link_target"
+        else
+            file_size=$(stat -c "%s" -- "$entry") || exit 1
+            file_hash=$(sha256sum -- "$entry") || exit 1
+            printf "F\t%s\t%s\t%s\n" "$relative_path" "$file_size" "${file_hash%% *}"
+        fi
+    done > "$records_file" || exit 1
+regular_files=$(awk -F "\t" '$1 == "F" { count++ } END { print count + 0 }' "$records_file")
+symbolic_links=$(awk -F "\t" '$1 == "L" { count++ } END { print count + 0 }' "$records_file")
+total_bytes=$(awk -F "\t" '$1 == "F" { total += $3 } END { print total + 0 }' "$records_file")
+awk -F "\t" '
+    $1 == "F" && NF == 4 && $3 ~ /^[0-9]+$/ && length($4) == 64 { next }
+    $1 == "L" && NF == 3 { next }
+    { invalid = 1 }
+    END { exit invalid }
+' "$records_file" || exit 1
+{
+    echo "# project-phoenix-integrity"
+    echo "# format_version=1"
+    printf "# created_at=%s\n" "$(date -Iseconds)"
+    printf "# source=%s\n" "${destination%/}/"
+    printf "# reference_file=%s\n" "$reference_name"
+    printf "# regular_files=%s\n" "$regular_files"
+    printf "# symbolic_links=%s\n" "$symbolic_links"
+    printf "# total_bytes=%s\n" "$total_bytes"
+    echo "# filename_limit=tabs and newlines are unsupported"
+    echo "--"
+    cat "$records_file"
+} > "$temporary_manifest"
+[ ! -e "$integrity_directory/$reference_name" ] || exit 1
+latest_temporary=$(mktemp "$integrity_directory/.integrity-latest.XXXXXX") || exit 1
+cp -- "$temporary_manifest" "$latest_temporary" || exit 1
+mv -- "$temporary_manifest" "$integrity_directory/$reference_name" || exit 1
+mv -f -- "$latest_temporary" "$integrity_directory/latest.txt" || exit 1
+cat "$integrity_directory/$reference_name"
+REMOTE_INTEGRITY
+    then
+        log_error "Remote integrity generation failed"
+        return 1
+    fi
+    reference_name=$(sed -n "s/^# reference_file=//p" "$local_manifest" | head -n 1)
+    [ -n "$reference_name" ] || return 1
+    integrity_load_manifest "$local_manifest" remote_file_sizes remote_file_hashes remote_links || return 1
+    integrity_store_local_remote_reference "$local_manifest" "$reference_name"
+    # shellcheck disable=SC2034 # Consumed by backup metadata and reporting.
+    INTEGRITY_REMOTE_REFERENCE_NAME="$reference_name"
+    rm -rf -- "$INTEGRITY_TEMP_DIR"
+    trap - EXIT HUP INT TERM
+}
+
 run_integrity_create() {
     local integrity_directory manifest_file timestamp
     validate_config || return 1
@@ -178,4 +284,8 @@ run_integrity_verify() {
     echo
     if [ "$mismatch_total" -eq 0 ]; then echo "INTEGRITY STATUS: PASS"; echo; echo "No files were changed."; echo "Docker containers were not started."; return 0; fi
     echo "INTEGRITY STATUS: FAILED"; echo; echo "No files were changed."; echo "Docker containers were not started."; return 1
+}
+
+run_integrity_verify_remote() {
+    run_integrity_verify "$MANIFEST_DIR/integrity/remote/latest.txt"
 }

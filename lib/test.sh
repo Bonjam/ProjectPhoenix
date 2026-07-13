@@ -21,6 +21,7 @@ run_tests() {
     local integrity_manifest_one
     local integrity_manifest_two
     local integrity_scenario
+    local remote_reference_directory
 
     section "PROJECT PHOENIX TESTS"
 
@@ -51,6 +52,8 @@ run_tests() {
     if declare -F run_verify_restore >/dev/null 2>&1; then test_pass "Verify-restore command function exists"; else test_fail "Verify-restore command function missing"; fi
     if declare -F run_integrity_create >/dev/null 2>&1; then test_pass "Integrity-create command function exists"; else test_fail "Integrity-create command function missing"; fi
     if declare -F run_integrity_verify >/dev/null 2>&1; then test_pass "Integrity-verify command function exists"; else test_fail "Integrity-verify command function missing"; fi
+    if declare -F integrity_generate_remote_reference >/dev/null 2>&1; then test_pass "Automatic remote integrity function exists"; else test_fail "Automatic remote integrity function missing"; fi
+    if declare -F run_integrity_verify_remote >/dev/null 2>&1; then test_pass "Integrity-verify-remote command function exists"; else test_fail "Integrity-verify-remote command function missing"; fi
     if [ -f "$PROJECT_ROOT/examples/config.example.conf" ]; then test_pass "Example config exists"; else test_fail "Example config missing"; fi
 
     discovery_value=$(discovery_get_os_name)
@@ -328,6 +331,75 @@ Total transferred file size: 4,096 bytes"
             test_fail "Integrity verification accepts malformed manifests"
         else
             test_pass "Integrity verification rejects malformed manifests clearly"
+        fi
+
+        if run_backup_integrity_hook 0 true &&
+            [ "$BACKUP_INTEGRITY_STATUS" = "success" ]; then
+            test_pass "Clean backup triggers integrity generation"
+        else
+            test_fail "Clean backup skips integrity generation"
+        fi
+        if run_backup_integrity_hook 23 true &&
+            [ "$BACKUP_INTEGRITY_STATUS" = "success" ]; then
+            test_pass "Rsync warning backup triggers integrity generation"
+        else
+            test_fail "Rsync warning backup skips integrity generation"
+        fi
+        if run_backup_integrity_hook 12 false &&
+            [ "$BACKUP_INTEGRITY_STATUS" = "skipped" ]; then
+            test_pass "Genuine rsync failure prevents integrity generation"
+        else
+            test_fail "Genuine rsync failure attempts integrity generation"
+        fi
+        if run_backup_integrity_hook 0 false; then
+            test_fail "Integrity failure is reported as success"
+        elif [ "$BACKUP_INTEGRITY_STATUS" = "failed" ]; then
+            backup_set_outcome_status 0 "$BACKUP_INTEGRITY_STATUS"
+            if [ "$BACKUP_HISTORY_STATUS" = "partial" ] &&
+                [[ "$BACKUP_HISTORY_DETAILS" == *"copied cleanly"* ]] &&
+                [[ "$BACKUP_HISTORY_DETAILS" == *"integrity generation failed"* ]]; then
+                test_pass "Integrity failure preserves clean copy outcome"
+            else
+                test_fail "Clean copy and integrity failure history is unclear"
+            fi
+        else
+            test_fail "Integrity failure corrupts backup status"
+        fi
+
+        run_backup_integrity_hook 23 true
+        backup_set_outcome_status 23 "$BACKUP_INTEGRITY_STATUS"
+        if [ "$BACKUP_HISTORY_STATUS" = "completed-with-warnings" ] &&
+            [[ "$BACKUP_HISTORY_DETAILS" == *"rsync warnings"* ]] &&
+            [[ "$BACKUP_HISTORY_DETAILS" == *"integrity manifest completed"* ]]; then
+            test_pass "Warning copy and integrity success preserve both outcomes"
+        else
+            test_fail "Warning copy history loses copy or integrity outcome"
+        fi
+
+        run_backup_integrity_hook 23 false || true
+        backup_set_outcome_status 23 "$BACKUP_INTEGRITY_STATUS"
+        if [ "$BACKUP_HISTORY_STATUS" = "partial" ] &&
+            [[ "$BACKUP_HISTORY_DETAILS" == *"rsync warnings"* ]] &&
+            [[ "$BACKUP_HISTORY_DETAILS" == *"integrity generation failed"* ]]; then
+            test_pass "Warning copy and integrity failure preserve both outcomes"
+        else
+            test_fail "Partial backup history loses copy or integrity outcome"
+        fi
+
+        remote_reference_directory="$test_temp_dir/local manifests"
+        mkdir -p "$remote_reference_directory/integrity/remote"
+        printf "previous reference\n" > \
+            "$remote_reference_directory/integrity/remote/latest.txt"
+        integrity_store_local_remote_reference \
+            "$integrity_manifest_one" "integrity-fixed.txt" \
+            "$remote_reference_directory"
+        if [ -f "$remote_reference_directory/integrity/remote/latest.txt" ] &&
+            [ ! -L "$remote_reference_directory/integrity/remote/latest.txt" ] &&
+            cmp -s "$integrity_manifest_one" \
+                "$remote_reference_directory/integrity/remote/latest.txt"; then
+            test_pass "Remote latest integrity reference is copied safely"
+        else
+            test_fail "Remote latest integrity reference is not a safe copy"
         fi
 
         # shellcheck disable=SC2034 # Fixture consumed by setup_detect_docker_source.
