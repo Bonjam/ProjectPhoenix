@@ -124,4 +124,95 @@ source_ssh_summary() {
         "${SOURCE_PATH:-not-set}"
 }
 
+source_ssh_base_check() {
+    source_ssh_validate_config &&
+        discovery_has_command ssh &&
+        discovery_has_command rsync &&
+        [ -f "$SOURCE_SSH_KEY" ] &&
+        [ ! -L "$SOURCE_SSH_KEY" ]
+}
+
+source_ssh_run_script() {
+    local script="$1"
+    shift
+
+    ssh \
+        -i "$SOURCE_SSH_KEY" \
+        -o BatchMode=yes \
+        -o ConnectTimeout=10 \
+        "${SOURCE_USER}@${SOURCE_HOST}" \
+        sh -s -- "$@" <<< "$script"
+}
+
+source_ssh_backup_prepare() {
+    local script
+
+    source_ssh_base_check || return 1
+
+    # shellcheck disable=SC2016 # Variables expand on the remote shell, not locally.
+    script='
+path=$1
+test -d "$path" &&
+test -r "$path" &&
+command -v rsync >/dev/null 2>&1
+'
+
+    source_ssh_run_script "$script" "$SOURCE_PATH"
+}
+
+source_ssh_transfer_to_local() {
+    local destination_path="$1"
+    local exclude_file="$2"
+
+    source_ssh_backup_prepare || return 1
+
+    rsync -avh --stats --human-readable \
+        --exclude-from="$exclude_file" \
+        -e "ssh -i $SOURCE_SSH_KEY -o BatchMode=yes -o ConnectTimeout=10" \
+        "${SOURCE_USER}@${SOURCE_HOST}:${SOURCE_PATH%/}/" \
+        "${destination_path%/}/"
+}
+
+source_ssh_inventory_compose_files() {
+    local script
+
+    # shellcheck disable=SC2016 # Variables expand on the remote shell, not locally.
+    script='
+path=$1
+find "$path" -type f \
+    \( -name docker-compose.yml -o \
+       -name docker-compose.yaml -o \
+       -name compose.yml -o \
+       -name compose.yaml \) \
+    -print
+'
+
+    source_ssh_run_script "$script" "$SOURCE_PATH"
+}
+
+source_ssh_inventory_source_sizes() {
+    local script
+
+    # shellcheck disable=SC2016 # Variables expand on the remote shell, not locally.
+    script='
+path=$1
+find "$path" -mindepth 1 -maxdepth 1 -exec du -sh -- {} \;
+'
+
+    source_ssh_run_script "$script" "$SOURCE_PATH"
+}
+
+source_ssh_size() {
+    local script
+
+    # shellcheck disable=SC2016 # Variables expand on the remote shell, not locally.
+    script='
+path=$1
+size=$(du -sh -- "$path" 2>/dev/null) || exit 1
+printf "%s\n" "${size%%[[:space:]]*}"
+'
+
+    source_ssh_run_script "$script" "$SOURCE_PATH"
+}
+
 source_register ssh source_ssh

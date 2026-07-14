@@ -16,7 +16,9 @@ source_register() {
 }
 
 source_registered() {
-    [ -n "${PHOENIX_SOURCE_PROVIDERS[$1]:-}" ]
+    local provider="${1:-}"
+    [ -n "$provider" ] || return 1
+    [ -n "${PHOENIX_SOURCE_PROVIDERS[$provider]:-}" ]
 }
 
 source_operation_function() {
@@ -42,7 +44,8 @@ source_call_for() {
 
 source_call() {
     local operation="$1"
+    local provider="${SOURCE_TRANSPORT:-local}"
     shift
 
-    source_call_for "$SOURCE_TRANSPORT" "$operation" "$@"
+    source_call_for "$provider" "$operation" "$@"
 }

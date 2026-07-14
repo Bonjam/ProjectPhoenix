@@ -106,6 +106,78 @@ run_local_transport_fixture_tests() {
         ! grep -Fq ssh "$command_file" && grep -Fq 'windows\ destination\ with\ spaces/' "$command_file"
     ); then test_pass "Local backup builds rsync without SSH"; else test_fail "Local backup command used SSH or wrong paths"; fi
     if (
+        SOURCE_TRANSPORT=local
+        SOURCE_PATH="$source"
+        SOURCE="$source"
+        DESTINATION_PATH="$destination"
+        EXCLUDE_FILE="$root/excludes"
+        unset SOURCE_CONTEXT_RESOLVED
+        source_resolve_context
+        rsync() { printf '%q ' "$@" > "$command_file"; }
+        transport_local_backup_transfer
+        printf -v expected_source '%q' "${source%/}/"
+        ! grep -Fq ssh "$command_file" &&
+            grep -Fq "$expected_source" "$command_file"
+    ); then
+        test_pass "Local destination dispatches local source transfer without SSH"
+    else
+        test_fail "Local source dispatch changed the local backup command"
+    fi
+
+    if (
+        SOURCE_TRANSPORT=ssh
+        SOURCE_HOST=nas-host
+        SOURCE_USER=nas-user
+        SOURCE_SSH_KEY="$root/source-key"
+        SOURCE_PATH=/volume2/docker
+        SOURCE="$SOURCE_PATH"
+        DESTINATION_PATH="$destination"
+        EXCLUDE_FILE="$root/excludes"
+        printf key > "$SOURCE_SSH_KEY"
+        unset SOURCE_CONTEXT_RESOLVED
+        source_resolve_context
+
+        ssh() {
+            if [[ "$*" == *"sh -s -- /volume2/docker"* ]]; then
+                cat >/dev/null
+            fi
+            return 0
+        }
+
+        rsync() { printf '%q ' "$@" > "$command_file"; }
+
+        transport_local_backup_transfer &&
+            grep -Fq ssh "$command_file" &&
+            grep -Fq 'nas-user@nas-host:/volume2/docker/' "$command_file" &&
+            grep -Fq 'windows\ destination\ with\ spaces/' "$command_file"
+    ); then
+        test_pass "SSH source builds an rsync pull into the local destination"
+    else
+        test_fail "SSH source did not build the expected local rsync pull"
+    fi
+
+    if (
+        SOURCE_TRANSPORT=ssh
+        SOURCE_HOST=nas-host
+        SOURCE_USER=nas-user
+        SOURCE_SSH_KEY="$root/source-key"
+        SOURCE_PATH=/volume2/docker
+        SOURCE="$SOURCE_PATH"
+        unset SOURCE_CONTEXT_RESOLVED
+        source_resolve_context
+
+        ssh() {
+            cat >/dev/null
+            printf '12G\n'
+        }
+
+        [ "$(source_size)" = 12G ]
+    ); then
+        test_pass "SSH source size is collected through the source provider"
+    else
+        test_fail "SSH source size bypassed or failed source-provider dispatch"
+    fi
+    if (
         SOURCE="$source" DESTINATION=/backup BACKUP_USER=user BACKUP_HOST=host SSH_KEY=/key EXCLUDE_FILE="$root/excludes"
         rsync() { printf '%q ' "$@" > "$command_file"; }
         transport_ssh_rsync_backup_transfer

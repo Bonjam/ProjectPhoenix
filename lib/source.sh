@@ -38,6 +38,18 @@ source_summary() {
     source_call summary
 }
 
+source_inventory_compose_files() {
+    source_call inventory_compose_files
+}
+
+source_inventory_source_sizes() {
+    source_call inventory_source_sizes
+}
+
+source_size() {
+    source_call size
+}
+
 run_source_info() {
     load_config || return 1
 

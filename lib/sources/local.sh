@@ -71,4 +71,45 @@ source_local_summary() {
     printf '%s\n' "${SOURCE_PATH:-not-set}"
 }
 
+source_local_backup_prepare() {
+    source_local_validate_config &&
+        [ -d "$SOURCE_PATH" ] &&
+        [ ! -L "$SOURCE_PATH" ] &&
+        [ -r "$SOURCE_PATH" ] &&
+        [ -x "$SOURCE_PATH" ]
+}
+
+source_local_transfer_to_local() {
+    local destination_path="$1"
+    local exclude_file="$2"
+    local source_path="${SOURCE_PATH:-${SOURCE:-}}"
+
+    [ -n "$source_path" ] || return 1
+
+    rsync -avh --stats --human-readable \
+        --exclude-from="$exclude_file" \
+        "${source_path%/}/" "${destination_path%/}/"
+}
+
+source_local_inventory_compose_files() {
+    find "$SOURCE_PATH" -type f \
+        \( -name docker-compose.yml -o \
+           -name docker-compose.yaml -o \
+           -name compose.yml -o \
+           -name compose.yaml \) \
+        -print
+}
+
+source_local_inventory_source_sizes() {
+    local entry
+
+    while IFS= read -r -d "" entry; do
+        du -sh -- "$entry" || return 1
+    done < <(find "$SOURCE_PATH" -mindepth 1 -maxdepth 1 -print0)
+}
+
+source_local_size() {
+    du -sh -- "$SOURCE_PATH" 2>/dev/null | awk '{print $1}'
+}
+
 source_register local source_local

@@ -208,8 +208,7 @@ transport_local_backup_prepare() {
 }
 
 transport_local_backup_transfer() {
-    rsync -avh --stats --human-readable --exclude-from="$EXCLUDE_FILE" \
-        "${SOURCE%/}/" "${DESTINATION_PATH%/}/"
+    source_call transfer_to_local "$DESTINATION_PATH" "$EXCLUDE_FILE"
 }
 
 transport_local_publish_metadata() {

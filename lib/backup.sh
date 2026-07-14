@@ -26,8 +26,8 @@ write_backup_header() {
         echo "Backup ID : $TIMESTAMP"
         echo "Started   : $(date)"
         echo "Host      : $(hostname)"
-        echo "Source    : $SOURCE"
-        echo "Target    : ${BACKUP_HOST}:${DESTINATION}"
+        echo "Source    : $(source_summary)"
+        echo "Target    : $(destination_endpoint_summary)"
         echo
         echo "-------------------------------------------------------------"
     } | tee "$LOGFILE"
@@ -131,7 +131,7 @@ backup_set_outcome_status() {
 
 calculate_backup_stats() {
     BACKUP_SIZE=$(transport_call destination_size 2>/dev/null || echo "unknown")
-    SOURCE_SIZE=$(du -sh -- "$SOURCE" | awk '{print $1}')
+    SOURCE_SIZE=$(source_size 2>/dev/null || echo "unknown")
 }
 
 write_backup_manifest() {
@@ -142,9 +142,9 @@ write_backup_manifest() {
         echo "Date: $(date)"
         echo "Duration: ${DURATION} seconds"
         echo "Exit Code: $RSYNC_EXIT"
-        echo "Source: $SOURCE"
+        echo "Source: $(source_summary)"
         echo "Source Size: $SOURCE_SIZE"
-        echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
+        echo "Destination: $(destination_endpoint_summary)"
         echo "Destination ID: $DESTINATION_ID"
         echo "Destination Name: $DESTINATION_NAME"
         echo "Transport: $DESTINATION_TRANSPORT"
@@ -235,6 +235,13 @@ run_backup() {
         return 1
     fi
     write_backup_header
+
+    if ! source_call backup_prepare; then
+        BACKUP_HISTORY_STATUS="failed"
+        BACKUP_HISTORY_DETAILS="Source provider validation failed before backup"
+        backup_lock_finalize_status 1 "source provider validation failure"
+        return $?
+    fi
 
     if ! transport_call backup_prepare; then
         # shellcheck disable=SC2034 # Consumed by launcher history reporting.

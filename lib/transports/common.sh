@@ -13,7 +13,9 @@ transport_register() {
 }
 
 transport_registered() {
-    [ -n "${PHOENIX_TRANSPORT_PROVIDERS[$1]:-}" ]
+    local transport="${1:-}"
+    [ -n "$transport" ] || return 1
+    [ -n "${PHOENIX_TRANSPORT_PROVIDERS[$transport]:-}" ]
 }
 
 transport_operation_function() {

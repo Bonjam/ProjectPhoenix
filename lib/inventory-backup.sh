@@ -42,8 +42,8 @@ backup_write_service_policy_metadata() {
 
 
 backup_generate_filesystem_inventory() {
-    local compose_collector="${1:-backup_inventory_compose_files}"
-    local size_collector="${2:-backup_inventory_source_sizes}"
+    local compose_collector="${1:-source_inventory_compose_files}"
+    local size_collector="${2:-source_inventory_source_sizes}"
 
     BACKUP_FILESYSTEM_INVENTORY_STATUS="failed"
     BACKUP_FILESYSTEM_INVENTORY_FAILURE=""
@@ -104,11 +104,11 @@ backup_write_inventory_summary() {
         echo "Date: $(date)"
         echo "Host: $(hostname)"
         echo "Version: $VERSION"
-        echo "Source: $SOURCE"
+        echo "Source: $(source_summary)"
         echo "Original Source: $BACKUP_INVENTORY_ORIGINAL_SOURCE"
         echo "Expected Services Policy: $BACKUP_EXPECTED_SERVICES_POLICY"
         echo "Production Docker Recovery: $BACKUP_PRODUCTION_DOCKER_RECOVERY"
-        echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
+        echo "Destination: $(destination_endpoint_summary)"
         echo "Filesystem Inventory Status: $BACKUP_FILESYSTEM_INVENTORY_STATUS"
         echo "Docker Runtime Inventory Status: $BACKUP_DOCKER_INVENTORY_STATUS"
         echo "Docker CLI Found: $BACKUP_DOCKER_CLI_FOUND"
