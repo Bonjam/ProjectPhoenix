@@ -246,7 +246,7 @@ $LOGO_SVG
 
             <div class="card">
                 <h2>Destination</h2>
-                <p><code>${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}</code></p>
+                <p><code>$(destination_endpoint_summary)</code></p>
             </div>
         </section>
 
@@ -275,7 +275,7 @@ $LOGO_SVG
 
         <div class="footer">
             <span class="accent">Project Phoenix</span> —
-            Lightweight Docker disaster recovery using SSH and rsync.
+            Lightweight Docker disaster recovery using registered transport providers and rsync.
         </div>
     </main>
 </body>

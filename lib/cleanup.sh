@@ -116,12 +116,16 @@ printf "removed=%s\nreclaimed_bytes=%s\n" "$removed" "$bytes"
 REMOTE_CLEANUP
 }
 
-retention_delete_remote_eligible() {
+retention_delete_remote_eligible_ssh() {
     local expected_name="$1"
     local -n expected_ref="$expected_name"
     # shellcheck disable=SC2153 # Global set by retention_resolve_count.
     retention_remote_cleanup_script "$RETENTION_COUNT" "${expected_ref[@]}" |
         ssh_run_destination_script "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" "$DESTINATION" accept-new
+}
+
+retention_delete_remote_eligible() {
+    transport_call retention_delete "$1"
 }
 
 integrity_cleanup_record() {
@@ -177,24 +181,24 @@ run_integrity_cleanup() {
     copied_eligible=("${RETENTION_ELIGIBLE_FILES[@]}")
     integrity_cleanup_record "$log_file" "Eligible copied remote: ${copied_eligible[*]:-none}"
 
-    ssh_key_exists "$SSH_KEY" || {
-        integrity_cleanup_record "$log_file" "Failure: SSH key missing"
-        integrity_cleanup_finish FAILED 1 "$log_file" failed "SSH key validation failed"
+    transport_call retention_preflight || {
+        integrity_cleanup_record "$log_file" "Failure: destination preflight"
+        integrity_cleanup_finish FAILED 1 "$log_file" failed "Destination validation failed"
         return
     }
     analysis=$(retention_remote_analysis) || {
-        integrity_cleanup_record "$log_file" "Failure: remote analysis"
-        integrity_cleanup_finish FAILED 1 "$log_file" failed "Remote analysis failed"
+        integrity_cleanup_record "$log_file" "Failure: destination analysis"
+        integrity_cleanup_finish FAILED 1 "$log_file" failed "Destination analysis failed"
         return
     }
     retention_parse_analysis "$analysis" || {
-        integrity_cleanup_record "$log_file" "Failure: malformed remote analysis"
-        integrity_cleanup_finish FAILED 1 "$log_file" failed "Malformed remote analysis"
+        integrity_cleanup_record "$log_file" "Failure: malformed destination analysis"
+        integrity_cleanup_finish FAILED 1 "$log_file" failed "Malformed destination analysis"
         return
     }
-    retention_report_area "Raspberry Pi References" "${DESTINATION%/}/backup/manifests/integrity"
+    retention_report_area "Destination References" "$(transport_call integrity_directory)"
     remote_eligible=("${RETENTION_ELIGIBLE_FILES[@]}")
-    integrity_cleanup_record "$log_file" "Eligible Raspberry Pi: ${remote_eligible[*]:-none}"
+    integrity_cleanup_record "$log_file" "Eligible destination: ${remote_eligible[*]:-none}"
 
     if [ "${#local_eligible[@]}" -eq 0 ] && [ "${#copied_eligible[@]}" -eq 0 ] &&
         [ "${#remote_eligible[@]}" -eq 0 ]; then
@@ -248,11 +252,11 @@ run_integrity_cleanup() {
 
     if [ "${#remote_eligible[@]}" -ne 0 ]; then
         if ! remote_output=$(retention_delete_remote_eligible remote_eligible); then
-            integrity_cleanup_record "$log_file" "Failure: Raspberry Pi cleanup"
+            integrity_cleanup_record "$log_file" "Failure: destination cleanup"
             if [ "$any_removed" -eq 0 ]; then
-                integrity_cleanup_finish FAILED 1 "$log_file" failed "Raspberry Pi cleanup failed before any deletion"
+                integrity_cleanup_finish FAILED 1 "$log_file" failed "Destination cleanup failed before any deletion"
             else
-                integrity_cleanup_finish PARTIAL 1 "$log_file" partial "Local files removed; Raspberry Pi cleanup failed"
+                integrity_cleanup_finish PARTIAL 1 "$log_file" partial "Local files removed; destination cleanup failed"
             fi
             return
         fi
@@ -267,11 +271,11 @@ run_integrity_cleanup() {
 
     integrity_cleanup_record "$log_file" "Removed local generated: $local_removed"
     integrity_cleanup_record "$log_file" "Removed copied remote: $copied_removed"
-    integrity_cleanup_record "$log_file" "Removed Raspberry Pi: $remote_removed"
+    integrity_cleanup_record "$log_file" "Removed destination: $remote_removed"
     integrity_cleanup_finish COMPLETE 0 "$log_file" completed \
         "Removed local=$local_removed copied=$copied_removed remote=$remote_removed bytes=$reclaimed"
     echo "Local generated files removed : $local_removed"
     echo "Copied remote files removed   : $copied_removed"
-    echo "Raspberry Pi files removed    : $remote_removed"
+    echo "Destination files removed     : $remote_removed"
     echo "Total bytes reclaimed         : $reclaimed"
 }

@@ -62,20 +62,8 @@ verify_backup_destination() {
 
 run_rsync_backup() {
     log_info "Starting rsync..."
-
     START=$(date +%s)
-
-    rsync -avh \
-        --stats \
-        --human-readable \
-        --exclude-from="$EXCLUDE_FILE" \
-        -e "ssh -i $SSH_KEY" \
-        "$SOURCE" \
-        "${BACKUP_USER}@${BACKUP_HOST}:$DESTINATION" \
-        >>"$LOGFILE" 2>&1
-
-    RSYNC_EXIT=$?
-
+    if transport_call backup_transfer >>"$LOGFILE" 2>&1; then RSYNC_EXIT=0; else RSYNC_EXIT=$?; fi
     END=$(date +%s)
     DURATION=$((END - START))
 }
@@ -116,6 +104,7 @@ backup_set_outcome_status() {
 
     copy_status=$(backup_rsync_copy_status "$1")
     if [ "$copy_status" = "failure" ]; then
+        # shellcheck disable=SC2034 # Consumed by launcher history reporting.
         BACKUP_HISTORY_STATUS="failed"
         BACKUP_HISTORY_DETAILS="Backup copy failed; integrity generation skipped"
     elif [ "$metadata_status" != "success" ]; then
@@ -124,10 +113,10 @@ backup_set_outcome_status() {
     elif [ "$2" = "success" ]; then
         if [ "$copy_status" = "warning" ]; then
             BACKUP_HISTORY_STATUS="completed-with-warnings"
-            BACKUP_HISTORY_DETAILS="Backup copied with rsync warnings; remote integrity manifest completed"
+            BACKUP_HISTORY_DETAILS="Backup copied with rsync warnings; destination integrity manifest completed"
         else
             BACKUP_HISTORY_STATUS="completed"
-            BACKUP_HISTORY_DETAILS="Backup copied cleanly; remote integrity manifest completed"
+            BACKUP_HISTORY_DETAILS="Backup copied cleanly; destination integrity manifest completed"
         fi
     elif [ "$copy_status" = "warning" ]; then
         BACKUP_HISTORY_STATUS="partial"
@@ -141,8 +130,8 @@ backup_set_outcome_status() {
 }
 
 calculate_backup_stats() {
-    BACKUP_SIZE=$(ssh -i "$SSH_KEY" "${BACKUP_USER}@${BACKUP_HOST}" "du -sh '$DESTINATION' | awk '{print \$1}'" 2>/dev/null || echo "unknown")
-    SOURCE_SIZE=$(du -sh "$SOURCE" | awk '{print $1}')
+    BACKUP_SIZE=$(transport_call destination_size 2>/dev/null || echo "unknown")
+    SOURCE_SIZE=$(du -sh -- "$SOURCE" | awk '{print $1}')
 }
 
 write_backup_manifest() {
@@ -156,6 +145,10 @@ write_backup_manifest() {
         echo "Source: $SOURCE"
         echo "Source Size: $SOURCE_SIZE"
         echo "Destination: ${BACKUP_HOST}:${DESTINATION}"
+        echo "Destination ID: $DESTINATION_ID"
+        echo "Destination Name: $DESTINATION_NAME"
+        echo "Transport: $DESTINATION_TRANSPORT"
+        echo "Filesystem: $(transport_call filesystem_summary)"
         echo "Backup Size: $BACKUP_SIZE"
         echo "Inventory: $INVENTORY_DIR"
         echo "Filesystem Inventory Status: ${BACKUP_FILESYSTEM_INVENTORY_STATUS:-unknown}"
@@ -210,6 +203,7 @@ write_backup_health_report() {
     fi
 
     echo | tee -a "$LOGFILE"
+    echo "Transport   : $DESTINATION_TRANSPORT" | tee -a "$LOGFILE"
     echo "Backup ID   : $TIMESTAMP" | tee -a "$LOGFILE"
     echo "Source Size : $SOURCE_SIZE" | tee -a "$LOGFILE"
     echo "Backup Size : $BACKUP_SIZE" | tee -a "$LOGFILE"
@@ -242,18 +236,12 @@ run_backup() {
     fi
     write_backup_header
 
-    if ! verify_backup_ssh; then
-        BACKUP_HISTORY_STATUS="failed"
-        BACKUP_HISTORY_DETAILS="SSH validation failed before backup"
-        backup_lock_finalize_status 1 "SSH validation failure"
-        return $?
-    fi
-    if ! verify_backup_destination; then
+    if ! transport_call backup_prepare; then
         # shellcheck disable=SC2034 # Consumed by launcher history reporting.
         BACKUP_HISTORY_STATUS="failed"
         # shellcheck disable=SC2034 # Consumed by launcher history reporting.
-        BACKUP_HISTORY_DETAILS="Destination validation failed before backup"
-        backup_lock_finalize_status 1 "destination validation failure"
+        BACKUP_HISTORY_DETAILS="Destination transport validation failed before backup"
+        backup_lock_finalize_status 1 "destination transport validation failure"
         return $?
     fi
 

@@ -196,31 +196,13 @@ run_recovery() {
 
     section "PROJECT PHOENIX RECOVERY ANALYSIS"
 
-    if ! discovery_has_command ssh; then
-        log_error "SSH client is not installed"
-        return 1
-    fi
-
-    if ! ssh_key_exists "$SSH_KEY"; then
-        log_error "Configured SSH key file does not exist"
-        return 1
-    fi
-
-    if ! ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new; then
-        log_error "SSH connection failed"
-        return 1
-    fi
-    log_success "SSH connection successful"
-
-    if ! ssh_remote_destination_exists \
-        "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" "$DESTINATION" \
-        accept-new; then
-        log_error "Backup destination was not found"
+    if ! transport_call recovery_preflight; then
+        log_error "Backup destination is unavailable"
         return 1
     fi
     log_success "Backup destination found"
 
-    if ! analysis=$(recovery_remote_analysis 2>/dev/null); then
+    if ! analysis=$(transport_call recovery_analysis 2>/dev/null); then
         log_error "Backup destination could not be read"
         return 1
     fi

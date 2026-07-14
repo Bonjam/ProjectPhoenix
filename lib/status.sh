@@ -10,7 +10,10 @@ run_status() {
     echo "Project      : $PROJECT_NAME"
     echo "Host         : $(hostname)"
     echo "Source       : $SOURCE"
-    echo "Destination  : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
+    echo "Destination  : $(destination_endpoint_summary)"
+    echo "Destination ID: $DESTINATION_ID"
+    echo "Transport    : $DESTINATION_TRANSPORT"
+    echo "Filesystem   : $(transport_call filesystem_summary)"
     echo
 
     echo "Local Source:"

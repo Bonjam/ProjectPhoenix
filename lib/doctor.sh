@@ -101,6 +101,9 @@ run_doctor() {
     doctor_check_file "$PROJECT_ROOT/lib/backup.sh" "Backup module exists" "Backup module missing"
     doctor_check_file "$PROJECT_ROOT/lib/restore.sh" "Restore module exists" "Restore module missing"
     doctor_check_file "$PROJECT_ROOT/lib/discovery.sh" "Discovery module exists" "Discovery module missing"
+    doctor_check_file "$PROJECT_ROOT/lib/transports/common.sh" "Transport registry exists" "Transport registry missing"
+    doctor_check_file "$PROJECT_ROOT/lib/transports/ssh-rsync.sh" "ssh-rsync provider exists" "ssh-rsync provider missing"
+    doctor_check_file "$PROJECT_ROOT/lib/transports/local.sh" "Local provider exists" "Local provider missing"
 
     echo
     section "DOCUMENTATION CHECKS"
@@ -114,45 +117,46 @@ run_doctor() {
     echo
     section "CONFIGURATION CHECKS"
 
-    CONFIG_FILE="$PROJECT_ROOT/config.conf"
-
-    if [ -f "$CONFIG_FILE" ]; then
-        # shellcheck source=/dev/null
-        source "$CONFIG_FILE"
-
+    if load_config_if_exists; then
         doctor_pass "config.conf exists"
-
         doctor_check_variable "${PROJECT_NAME:-}" "PROJECT_NAME set" "PROJECT_NAME missing"
         doctor_check_variable "${SOURCE:-}" "SOURCE set" "SOURCE missing"
-        doctor_check_variable "${DESTINATION:-}" "DESTINATION set" "DESTINATION missing"
-        doctor_check_variable "${BACKUP_HOST:-}" "BACKUP_HOST set" "BACKUP_HOST missing"
-        doctor_check_variable "${BACKUP_USER:-}" "BACKUP_USER set" "BACKUP_USER missing"
-        doctor_check_variable "${SSH_KEY:-}" "SSH_KEY set" "SSH_KEY missing"
         doctor_check_variable_warn "${EXCLUDE_FILE:-}" "EXCLUDE_FILE set" "EXCLUDE_FILE missing"
-
+        if transport_call validate_config; then
+            doctor_pass "$DESTINATION_TRANSPORT destination settings valid"
+        else
+            doctor_fail "$DESTINATION_TRANSPORT destination settings invalid${LOCAL_PATH_ERROR:+: $LOCAL_PATH_ERROR}"
+        fi
+        if [ "$DESTINATION_TRANSPORT" = local ]; then
+            if [ -d "$(dirname -- "$DESTINATION_PATH")" ] &&
+                [ -r "$(dirname -- "$DESTINATION_PATH")" ] &&
+                [ -x "$(dirname -- "$DESTINATION_PATH")" ]; then
+                doctor_pass "Local destination parent exists"
+            else
+                doctor_fail "Local destination parent is missing"
+            fi
+        else
+            doctor_check_variable "${BACKUP_HOST:-}" "BACKUP_HOST set" "BACKUP_HOST missing"
+            doctor_check_variable "${BACKUP_USER:-}" "BACKUP_USER set" "BACKUP_USER missing"
+            doctor_check_variable "${SSH_KEY:-}" "SSH_KEY set" "SSH_KEY missing"
+        fi
         echo
         section "SOURCE CHECKS"
-
-        if [ -d "$SOURCE" ]; then
-            doctor_pass "Source folder exists"
-        else
-            doctor_warn "Source folder not found on this machine"
-        fi
+        if [ -d "$SOURCE" ]; then doctor_pass "Source folder exists"; else doctor_warn "Source folder not found on this machine"; fi
     else
         doctor_warn "config.conf not found"
         echo
         echo "Create one with:"
-        echo
         echo "cp examples/config.example.conf config.conf"
-        echo
-        echo "Then edit config.conf for your system."
     fi
 
     echo
     section "REQUIREMENT CHECKS"
 
     doctor_check_command "bash" "bash found" "bash missing"
-    doctor_check_command "ssh" "ssh found" "ssh missing"
+    if [ "${DESTINATION_TRANSPORT:-ssh-rsync}" = ssh-rsync ]; then
+        doctor_check_command "ssh" "ssh found" "ssh missing"
+    fi
     doctor_check_command "rsync" "rsync found" "rsync missing"
 
     if discovery_has_docker; then

@@ -11,13 +11,13 @@ run_restore() {
 
     echo "Version      : $VERSION"
     echo "Project      : $PROJECT_NAME"
-    echo "Restore From : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
+    echo "Restore From : $(transport_call restore_source_summary)"
     echo "Restore To   : $SOURCE"
     echo
 
     section "RESTORE COMMAND"
 
-    echo "rsync -avh -e \"ssh -i $SSH_KEY\" ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION} $SOURCE"
+    transport_call restore_preview_command
     echo
 
     section "AFTER RESTORE"
@@ -177,24 +177,11 @@ run_restore_dry_run() {
         return 1
     fi
 
-    if ! ssh_key_exists "$SSH_KEY"; then
-        log_error "Configured SSH key file does not exist"
+    if ! transport_call restore_preflight; then
+        log_error "Configured backup destination is unavailable"
         return 1
     fi
-
-    if ! ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new; then
-        log_error "SSH connection failed"
-        return 1
-    fi
-    log_success "SSH connection successful"
-
-    if ! ssh_remote_destination_exists \
-        "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" "$DESTINATION" \
-        accept-new; then
-        log_error "Backup destination was not found"
-        return 1
-    fi
-    log_success "Backup destination found"
+    log_success "Backup destination is available"
 
     if [ ! -d "$SOURCE" ]; then
         log_warning "Local restore target does not exist; it will not be created"
@@ -208,15 +195,13 @@ run_restore_dry_run() {
     log_success "Local restore target is accessible"
 
     echo
-    printf "%-15s: %s\n" "Remote Backup" "${BACKUP_USER}@${BACKUP_HOST}:$(restore_normalize_directory "$DESTINATION")"
+    printf "%-15s: %s\n" "Backup Source" "$(transport_call restore_source_summary)"
     printf "%-15s: %s\n" "Restore Target" "$(restore_normalize_directory "$SOURCE")"
     echo
     echo "Files that would be restored:"
     echo "--------------------------------"
 
-    if dry_run_output=$(LC_ALL=C restore_execute_dry_run \
-        rsync "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" \
-        "$DESTINATION" "$SOURCE" 2>&1); then
+    if dry_run_output=$(LC_ALL=C transport_call restore_dry_run 2>&1); then
         rsync_exit_code=0
     else
         rsync_exit_code=$?
@@ -271,22 +256,11 @@ run_restore_confirm() {
         log_error "rsync is not installed"
         return 1
     fi
-    if ! ssh_key_exists "$SSH_KEY"; then
-        log_error "Configured SSH key file does not exist"
+    if ! transport_call restore_preflight; then
+        log_error "Configured backup destination is unavailable"
         return 1
     fi
-    if ! ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new; then
-        log_error "SSH connection failed"
-        return 1
-    fi
-    log_success "SSH connection successful"
-    if ! ssh_remote_destination_exists \
-        "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" "$DESTINATION" \
-        accept-new; then
-        log_error "Backup destination was not found"
-        return 1
-    fi
-    log_success "Backup destination found"
+    log_success "Backup destination is available"
 
     if [ ! -d "$SOURCE" ]; then
         log_warning "Local restore target does not exist; it will not be created"
@@ -305,18 +279,16 @@ run_restore_confirm() {
     log_file=$(restore_create_log_file)
     : > "$log_file"
     restore_log "$log_file" "Restore started"
-    restore_log "$log_file" "Remote source: ${BACKUP_USER}@${BACKUP_HOST}:$(restore_normalize_directory "$DESTINATION")"
+    restore_log "$log_file" "Source: $(transport_call restore_source_summary)"
     restore_log "$log_file" "Local target: $(restore_normalize_directory "$SOURCE")"
 
     echo
-    printf "%-15s: %s\n" "Remote Backup" "${BACKUP_USER}@${BACKUP_HOST}:$(restore_normalize_directory "$DESTINATION")"
+    printf "%-15s: %s\n" "Backup Source" "$(transport_call restore_source_summary)"
     printf "%-15s: %s\n" "Restore Target" "$(restore_normalize_directory "$SOURCE")"
     echo
     echo "Running required dry run..."
 
-    if dry_run_output=$(LC_ALL=C restore_execute_dry_run \
-        rsync "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" \
-        "$DESTINATION" "$SOURCE" 2>&1); then
+    if dry_run_output=$(LC_ALL=C transport_call restore_dry_run 2>&1); then
         dry_run_exit_code=0
     else
         dry_run_exit_code=$?
@@ -364,10 +336,7 @@ run_restore_confirm() {
     echo
     echo "Starting confirmed restore..."
 
-    if restore_output=$(restore_execute_confirmed_if_ready \
-        "$dry_run_exit_code" "$confirmation" \
-        rsync "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" \
-        "$DESTINATION" "$SOURCE" 2>&1); then
+    if restore_output=$(transport_call restore_confirmed 2>&1); then
         rsync_exit_code=0
     else
         rsync_exit_code=$?

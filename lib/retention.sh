@@ -184,7 +184,7 @@ retention_report_area() {
     fi
 }
 
-retention_remote_analysis() {
+retention_remote_analysis_ssh() {
     {
         printf "retention_count=%q\n" "$RETENTION_COUNT"
         cat <<\REMOTE_RETENTION
@@ -246,6 +246,10 @@ REMOTE_RETENTION
         accept-new bash
 }
 
+retention_remote_analysis() {
+    transport_call retention_analysis
+}
+
 run_integrity_retention() {
     local analysis
     local retention_status="PASS"
@@ -272,14 +276,13 @@ run_integrity_retention() {
         log_warning "Using legacy copied references for the default destination; state is not combined"
     fi
     retention_analyse_directory "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR" "$RETENTION_COUNT" || return 1
-    retention_report_area "Copied Remote References" "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR"
+    retention_report_area "Copied Destination References" "$DESTINATION_SELECTED_INTEGRITY_REMOTE_DIR"
     retention_analysis_has_warning && retention_status="WARNING"
 
-    ssh_key_exists "$SSH_KEY" || { log_error "Configured SSH key file does not exist"; return 1; }
-    ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new || { log_error "SSH connection failed"; return 1; }
-    analysis=$(retention_remote_analysis) || { log_error "Remote retention analysis failed"; return 1; }
-    retention_parse_analysis "$analysis" || { log_error "Malformed remote retention output"; return 1; }
-    retention_report_area "Raspberry Pi References" "${DESTINATION%/}/backup/manifests/integrity"
+    transport_call retention_preflight || { log_error "Destination retention preflight failed"; return 1; }
+    analysis=$(retention_remote_analysis) || { log_error "Destination retention analysis failed"; return 1; }
+    retention_parse_analysis "$analysis" || { log_error "Malformed destination retention output"; return 1; }
+    retention_report_area "Destination References" "$(transport_call integrity_directory)"
     retention_analysis_has_warning && retention_status="WARNING"
 
     echo

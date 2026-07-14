@@ -259,11 +259,36 @@ DESTINATION_TRANSPORT="ssh-rsync"
 ```
 
 Destination IDs may contain only lowercase letters, digits, and hyphens and
-must begin with a letter or digit. This Phase 2 foundation supports only
-`ssh-rsync`; Windows/local, SMB, Google Drive, and rclone providers are planned
-but are not implemented.
+must begin with a letter or digit. Project Phoenix supports `ssh-rsync` and
+`local`. SMB, Google Drive, and rclone remain planned and are not implemented.
 
 Your real `config.conf` should never be committed to Git.
+
+### Windows local storage
+
+The `local` transport is intended for storage mounted directly in the current
+Linux or WSL environment. WSL normally exposes Windows drives beneath
+`/mnt/<drive-letter>/`; use a dedicated backup directory such as
+`/mnt/c/ProjectPhoenixBackups/nas-docker-backup/` and quote paths containing
+spaces. The source and destination must never overlap.
+
+```bash
+DESTINATION_ID="windows-local"
+DESTINATION_NAME="Windows Local Backup"
+DESTINATION_TRANSPORT="local"
+DESTINATION_PATH="/mnt/c/ProjectPhoenixBackups/nas-docker-backup/"
+LOCAL_ALLOWED_ROOTS="/mnt/c:/mnt/d:/mnt/e:/mnt/f:/tmp"
+```
+
+Local profiles do not use `BACKUP_HOST`, `BACKUP_USER`, or `SSH_KEY`.
+`DESTINATION_PATH` is preferred; `DESTINATION` remains a compatibility alias.
+The local copied integrity-reference directory still contains the name
+`remote` for layout compatibility, but it represents the selected destination
+for every transport.
+
+Windows-local storage protects against failure of the NAS disk, but it may not
+protect against failure of the Windows PC or its disk. Maintain another
+independent copy for broader resilience.
 
 ### Legacy state migration
 
@@ -291,6 +316,7 @@ automatically.
 | `requirements` | Check required system tools            |
 | `test`         | Run lightweight internal tests         |
 | `destination-info` | Show the active destination profile without connecting |
+| `local-check` | Inspect a local destination read-only without creating it |
 | `destination-migration` | Analyse legacy local state without changing it |
 | `destination-migrate` | Confirm a copy-first local legacy-state migration |
 | `doctor`       | Run health diagnostics                 |

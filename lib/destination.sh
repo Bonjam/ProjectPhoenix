@@ -21,10 +21,7 @@ destination_id_valid() {
 }
 
 destination_transport_supported() {
-    case "$1" in
-        ssh-rsync) return 0 ;;
-        *) return 1 ;;
-    esac
+    transport_registered "$1"
 }
 
 destination_path_beneath_project() {
@@ -100,9 +97,13 @@ destination_resolve_context() {
         return 1
     fi
     if ! destination_transport_supported "$DESTINATION_TRANSPORT"; then
-        destination_error "Unsupported DESTINATION_TRANSPORT: $DESTINATION_TRANSPORT (supported: ssh-rsync)"
+        destination_error "Unsupported DESTINATION_TRANSPORT: $DESTINATION_TRANSPORT (supported: ssh-rsync, local)"
         return 1
     fi
+    transport_call configure || {
+        destination_error "Destination transport configuration could not be resolved"
+        return 1
+    }
     DESTINATION_CONTEXT_RESOLVED="yes"
     destination_resolve_state_paths || {
         destination_error "Destination state paths are unsafe or outside PROJECT_ROOT"
@@ -165,7 +166,7 @@ destination_select_backup_manifest_directory() {
 }
 
 destination_endpoint_summary() {
-    printf "%s@%s:%s\n" "${BACKUP_USER:-not-set}" "${BACKUP_HOST:-not-set}" "${DESTINATION:-not-set}"
+    transport_call endpoint_summary
 }
 
 destination_state_present() {
@@ -184,6 +185,10 @@ destination_legacy_integrity_present() {
 run_destination_info() {
     local state_status="empty"
     load_config || return 1
+    transport_call inspect_config || {
+        destination_error "Destination settings are invalid${LOCAL_PATH_ERROR:+: $LOCAL_PATH_ERROR}"
+        return 1
+    }
     if destination_state_present; then
         state_status="active"
     fi
@@ -191,9 +196,7 @@ run_destination_info() {
     printf "%-22s: %s\n" "ID" "$DESTINATION_ID"
     printf "%-22s: %s\n" "Name" "$DESTINATION_NAME"
     printf "%-22s: %s\n" "Transport" "$DESTINATION_TRANSPORT"
-    printf "%-22s: %s\n" "Host" "${BACKUP_HOST:-not set}"
-    printf "%-22s: %s\n" "User" "${BACKUP_USER:-not set}"
-    printf "%-22s: %s\n" "Path" "${DESTINATION:-not set}"
+    transport_call info || return 1
     printf "%-22s: %s/...\n" "State Namespace" "$DESTINATION_STATE_NAMESPACE"
     printf "%-22s: %s\n" "Namespaced State" "$state_status"
     printf "%-22s: %s\n" "Legacy Configuration" "$DESTINATION_LEGACY_CONFIGURATION"

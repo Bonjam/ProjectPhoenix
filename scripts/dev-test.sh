@@ -46,7 +46,7 @@ echo "Checking Bash files..."
 echo "-------------------------------------------------------------"
 
 if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck scripts/*.sh lib/*.sh; then
+    if shellcheck scripts/*.sh lib/*.sh lib/transports/*.sh; then
         pass "ShellCheck"
     else
         fail "ShellCheck"
@@ -61,7 +61,8 @@ run_command_test "info" "bash scripts/phoenix.sh info"
 run_command_test "requirements" "bash scripts/phoenix.sh requirements"
 run_command_test "test" "bash scripts/phoenix.sh test"
 run_command_test "doctor" "bash scripts/phoenix.sh doctor"
-run_command_test "discovery" "bash scripts/phoenix.sh discovery"
+echo
+echo "[SKIP] Operational discovery (lightweight tests cover discovery without running Docker)"
 
 if [ -f test-local/pi-integration.conf ]; then
     run_command_test "Pi integration" "bash scripts/test-pi-integration.sh"

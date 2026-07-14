@@ -46,7 +46,11 @@ backup_publish_metadata_local() {
     fi
 }
 
-backup_publish_metadata() {
+transport_publish_metadata() {
+    transport_call publish_metadata
+}
+
+backup_publish_metadata_ssh() {
     local guide_source="$PROJECT_ROOT/docs/RESTORE.md"
     local remote_inventory="${DESTINATION%/}/backup/manifests/inventory/$TIMESTAMP"
     local remote_guide_temporary="${DESTINATION%/}/backup/restore/.README.$TIMESTAMP.tmp"
@@ -98,7 +102,7 @@ REMOTE_METADATA_GUIDE
 
 run_backup_metadata_hook() {
     local rsync_exit_code="$1"
-    local publisher="${2:-backup_publish_metadata}"
+    local publisher="${2:-transport_publish_metadata}"
     if ! backup_rsync_copy_usable "$rsync_exit_code"; then BACKUP_METADATA_STATUS="skipped"; return 0; fi
     if "$publisher"; then BACKUP_METADATA_STATUS="success"; return 0; fi
     # shellcheck disable=SC2034 # Consumed by backup orchestration and tests.

@@ -10,7 +10,8 @@ COMMAND="${1:-help}"
 
 phoenix_init_core
 case "$COMMAND" in
-    help|--help|-h|check-config|destination-info|destination-migration|destination-migrate|health) ;;
+    help|--help|-h|check-config|destination-info|destination-migration|destination-migrate|health|requirements|doctor|local-check) ;;
+
     *) phoenix_init_dirs ;;
 esac
 load_phoenix_modules
@@ -70,7 +71,11 @@ case "$COMMAND" in
     doctor)
         show_banner
         run_doctor
-        write_history_entry "doctor" "completed" "Doctor diagnostics executed"
+        ;;
+
+    local-check)
+        show_banner
+        run_local_check
         ;;
 
     help|--help|-h)

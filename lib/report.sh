@@ -19,7 +19,11 @@ run_report() {
         echo "Generated    : $(date)"
         echo "Project      : $PROJECT_NAME"
         echo "Source       : $SOURCE"
-        echo "Destination  : ${BACKUP_USER}@${BACKUP_HOST}:${DESTINATION}"
+        echo "Destination  : $(destination_endpoint_summary)"
+        echo "Destination ID: $DESTINATION_ID"
+        echo "Destination Name: $DESTINATION_NAME"
+        echo "Transport    : $DESTINATION_TRANSPORT"
+        echo "Filesystem   : $(transport_call filesystem_summary)"
         echo
         echo "Source Size:"
         du -sh "$SOURCE" 2>/dev/null || echo "Unable to read source size"

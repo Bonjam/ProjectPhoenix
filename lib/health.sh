@@ -54,9 +54,10 @@ health_source_path_safe() {
 
 health_config_values_valid() {
     [ -n "${PROJECT_NAME:-}" ] && [ -n "${TAGLINE:-}" ] &&
-        [ -n "${SOURCE:-}" ] && [ -n "${DESTINATION:-}" ] &&
-        [ -n "${BACKUP_HOST:-}" ] && [ -n "${BACKUP_USER:-}" ] &&
-        [ -n "${SSH_KEY:-}" ] && [ -n "${BACKUP_DIR:-}" ]
+        [ -n "${SOURCE:-}" ] && [ -n "${BACKUP_DIR:-}" ] &&
+        destination_id_valid "${DESTINATION_ID:-}" &&
+        destination_transport_supported "${DESTINATION_TRANSPORT:-}" &&
+        transport_call validate_config
 }
 
 health_rsync_status() {
@@ -269,6 +270,10 @@ run_health() {
         echo
         echo "HEALTH STATUS: FAILED"
         return 2
+    fi
+    if [ "$DESTINATION_TRANSPORT" = local ]; then
+        transport_call run_health
+        return $?
     fi
     health_resolve_thresholds
     retention_resolve_count "${INTEGRITY_RETENTION_COUNT:-}"

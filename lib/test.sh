@@ -1,5 +1,153 @@
 #!/bin/bash
 
+# shellcheck disable=SC2030,SC2031,SC2034,SC2317 # Isolated fixture subshells and indirect mocks.
+run_local_transport_fixture_tests() {
+    local root="$1" project source destination output before after command_file ssh_marker
+    local inventory guide metadata_root cleanup_directory
+    local -a cleanup_expected=()
+    root="$root/local provider fixtures"
+    project="$root/project"
+    source="$root/source"
+    destination="$root/windows destination with spaces"
+    mkdir -p "$project" "$source" "$root"
+
+    if [ -f "$PROJECT_ROOT/lib/transports/local.sh" ] &&
+        declare -F transport_local_validate_path >/dev/null 2>&1; then test_pass "Local provider module loads"; else test_fail "Local provider module is missing"; fi
+    if transport_registered ssh-rsync; then test_pass "ssh-rsync transport remains registered"; else test_fail "ssh-rsync transport registration was lost"; fi
+    if transport_registered local; then test_pass "Local transport registers successfully"; else test_fail "Local transport is not registered"; fi
+    if ! transport_registered rclone; then test_pass "Unknown transports remain unregistered"; else test_fail "Unknown transport was registered"; fi
+
+    if (
+        PROJECT_ROOT="$project" SOURCE="$source" DESTINATION_TRANSPORT=local
+        DESTINATION_PATH="$destination" LOCAL_ALLOWED_ROOTS=/tmp
+        unset BACKUP_HOST BACKUP_USER SSH_KEY
+        transport_local_configure
+        transport_local_validate_config
+    ); then test_pass "Local configuration does not require SSH settings"; else test_fail "Local configuration incorrectly requires SSH settings"; fi
+    if ! (unset BACKUP_HOST BACKUP_USER SSH_KEY DESTINATION; transport_ssh_rsync_configure; transport_ssh_rsync_validate_config); then
+        test_pass "ssh-rsync configuration still requires remote settings"
+    else
+        test_fail "ssh-rsync accepted missing remote settings"
+    fi
+
+    if transport_local_validate_path "/mnt/c/ProjectPhoenixBackups/fixture-only" "$source" "$project" "/mnt/c:/tmp"; then test_pass "Valid /mnt/c local path passes"; else test_fail "Valid /mnt/c local path fails"; fi
+    if transport_local_validate_path "$destination" "$source" "$project" /tmp; then test_pass "Temporary local path with spaces passes"; else test_fail "Temporary local path with spaces fails"; fi
+    if ! transport_local_validate_path relative/path "$source" "$project" /tmp; then test_pass "Relative local path fails"; else test_fail "Relative local path passes"; fi
+    if ! transport_local_validate_path / "$source" "$project" /tmp; then test_pass "Root local path fails"; else test_fail "Root local path passes"; fi
+    if ! transport_local_validate_path "$project" "$source" "$project" /tmp; then test_pass "PROJECT_ROOT local path fails"; else test_fail "PROJECT_ROOT local path passes"; fi
+    if ! transport_local_validate_path "$source" "$source" "$project" /tmp; then test_pass "SOURCE local path fails"; else test_fail "SOURCE local path passes"; fi
+    if ! transport_local_validate_path "$source/child" "$source" "$project" /tmp &&
+        ! transport_local_validate_path "$root" "$root/child-source" "$project" /tmp; then
+        test_pass "Source and destination overlap fails in both directions"
+    else
+        test_fail "Source and destination overlap was accepted"
+    fi
+    if ! transport_local_validate_path /home/unsafe-backup "$source" "$project" /tmp; then test_pass "Disallowed local root fails"; else test_fail "Disallowed local root passes"; fi
+    ln -s /etc "$root/escape-link"
+    if ! transport_local_validate_path "$root/escape-link/backup" "$source" "$project" /tmp; then test_pass "Local symlink escape fails"; else test_fail "Local symlink escape passes"; fi
+    mkdir -p "$root/safe-target"
+    ln -s "$root/safe-target" "$root/intermediate-link"
+    if ! transport_local_validate_path "$root/intermediate-link/backup" "$source" "$project" /tmp; then test_pass "Unsafe intermediate symlink fails"; else test_fail "Unsafe intermediate symlink passes"; fi
+
+    before=$(find "$root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+    output=$(
+        PROJECT_ROOT="$project"; phoenix_init_core
+        SOURCE="$source" DESTINATION_ID=windows-local-test DESTINATION_NAME="Windows Local Test"
+        DESTINATION_TRANSPORT=local DESTINATION_PATH="$destination" LOCAL_ALLOWED_ROOTS=/tmp
+        unset DESTINATION_CONTEXT_RESOLVED BACKUP_HOST BACKUP_USER SSH_KEY
+        destination_resolve_context
+        load_config() { destination_resolve_context; }
+        run_destination_info
+    )
+    after=$(find "$root" -mindepth 1 -printf '%P|%y|%s\n' | LC_ALL=C sort)
+    if [ "$before" = "$after" ] && grep -Fq "Transport             : local" <<< "$output" &&
+        ! grep -Eq '^(Host|User|SSH Key)' <<< "$output"; then
+        test_pass "Local destination-info is read-only and hides SSH fields"
+    else
+        test_fail "Local destination-info changed state or exposed SSH fields"
+    fi
+
+    output=$(
+        PROJECT_ROOT="$project"; phoenix_init_core
+        SOURCE="$source" DESTINATION_ID=windows-local-test DESTINATION_NAME="Windows Local Test"
+        DESTINATION_TRANSPORT=local DESTINATION_PATH="$destination" LOCAL_ALLOWED_ROOTS=/tmp
+        unset DESTINATION_CONTEXT_RESOLVED
+        destination_resolve_context
+        load_config() { destination_resolve_context; }
+        run_local_check
+    )
+    if [ ! -e "$destination" ] && grep -Fq "LOCAL CHECK: WARNING" <<< "$output"; then
+        test_pass "local-check is read-only and does not create its destination"
+    else
+        test_fail "local-check created a destination or reported an unsafe result"
+    fi
+
+    mkdir -p "$destination"
+    ssh_marker="$root/ssh-called"
+    if (
+        PROJECT_ROOT="$project"; phoenix_init_core
+        SOURCE="$source" BACKUP_DIR=backup TAGLINE=fixture
+        DESTINATION_ID=windows-local-test DESTINATION_NAME="Windows Local Test"
+        DESTINATION_TRANSPORT=local DESTINATION_PATH="$destination" LOCAL_ALLOWED_ROOTS=/tmp
+        unset DESTINATION_CONTEXT_RESOLVED
+        destination_resolve_context
+        ssh() { printf called > "$ssh_marker"; return 1; }
+        load_config_if_exists() { destination_resolve_context; }
+        transport_local_run_health >/dev/null || [ "$?" -eq 1 ]
+        [ ! -e "$ssh_marker" ]
+    ); then test_pass "Local health does not invoke SSH"; else test_fail "Local health invoked SSH"; fi
+
+    command_file="$root/local-backup-command"
+    if (
+        SOURCE="$source" DESTINATION_PATH="$destination" EXCLUDE_FILE="$root/excludes"
+        : > "$EXCLUDE_FILE"
+        rsync() { printf '%q ' "$@" > "$command_file"; }
+        transport_local_backup_transfer
+        ! grep -Fq ssh "$command_file" && grep -Fq 'windows\ destination\ with\ spaces/' "$command_file"
+    ); then test_pass "Local backup builds rsync without SSH"; else test_fail "Local backup command used SSH or wrong paths"; fi
+    if (
+        SOURCE="$source" DESTINATION=/backup BACKUP_USER=user BACKUP_HOST=host SSH_KEY=/key EXCLUDE_FILE="$root/excludes"
+        rsync() { printf '%q ' "$@" > "$command_file"; }
+        transport_ssh_rsync_backup_transfer
+        grep -Fq "ssh" "$command_file" && grep -Fq "user@host:/backup" "$command_file"
+    ); then test_pass "ssh-rsync backup retains its SSH command"; else test_fail "ssh-rsync backup command changed"; fi
+    if (
+        SOURCE="$source" DESTINATION_PATH="$destination"
+        ssh() { printf called > "$ssh_marker"; return 1; }
+        rsync() { printf '%q ' "$@" > "$command_file"; }
+        transport_local_restore_dry_run
+        ! grep -Fq ssh "$command_file" && [ ! -e "$ssh_marker" ]
+    ); then test_pass "Local restore dry run does not invoke SSH"; else test_fail "Local restore dry run invoked SSH"; fi
+
+    inventory="$root/inventory"; guide="$root/RESTORE.md"; metadata_root="$destination/backup"
+    mkdir -p "$inventory"; printf 'inventory\n' > "$inventory/summary.txt"; printf 'guide\n' > "$guide"
+    if backup_publish_metadata_local "$inventory" "$guide" "$metadata_root" fixture-id &&
+        [ -f "$metadata_root/manifests/inventory/fixture-id/summary.txt" ] &&
+        [ -f "$metadata_root/restore/README.md" ]; then test_pass "Local metadata publication uses local operations"; else test_fail "Local metadata publication failed"; fi
+
+    if (
+        PROJECT_ROOT="$project"; phoenix_init_core
+        DESTINATION_ID=windows-one DESTINATION_NAME="Windows One" DESTINATION_TRANSPORT=local DESTINATION_PATH="$destination"
+        LOCAL_ALLOWED_ROOTS=/tmp SOURCE="$source"; unset DESTINATION_CONTEXT_RESOLVED; destination_resolve_context
+        first=$DESTINATION_INTEGRITY_REMOTE_DIR
+        DESTINATION_ID=windows-two; DESTINATION_NAME="Windows Two"; unset DESTINATION_CONTEXT_RESOLVED; destination_resolve_context
+        [ "$first" != "$DESTINATION_INTEGRITY_REMOTE_DIR" ] && [[ "$first" == */windows-one/* ]] && [[ "$DESTINATION_INTEGRITY_REMOTE_DIR" == */windows-two/* ]]
+    ); then test_pass "Two local profiles keep integrity and state isolated"; else test_fail "Local profiles share destination state"; fi
+
+    cleanup_directory="$root/cleanup/backup/manifests/integrity"; mkdir -p "$cleanup_directory"
+    printf one > "$cleanup_directory/integrity-20260701-000000.txt"
+    printf two > "$cleanup_directory/integrity-20260702-000000.txt"
+    cp "$cleanup_directory/integrity-20260702-000000.txt" "$cleanup_directory/latest.txt"
+    cleanup_expected=(integrity-20260701-000000.txt)
+    if (
+        DESTINATION_PATH="$root/cleanup" RETENTION_COUNT=1
+        ssh() { printf called > "$ssh_marker"; return 1; }
+        transport_local_retention_delete cleanup_expected >/dev/null
+        [ ! -e "$cleanup_directory/integrity-20260701-000000.txt" ] &&
+            [ -e "$cleanup_directory/integrity-20260702-000000.txt" ] && [ ! -e "$ssh_marker" ]
+    ); then test_pass "Local fixture cleanup uses no SSH and preserves retained references"; else test_fail "Local fixture cleanup invoked SSH or deleted the wrong file"; fi
+}
+
 run_tests() {
     local discovery_value
     local test_docker_source
@@ -200,6 +348,8 @@ run_tests() {
         else
             test_fail "Unknown destination transport is accepted"
         fi
+
+        run_local_transport_fixture_tests "$test_temp_dir"
 
         mkdir -p "$destination_fixture_root/manifests/integrity/remote"
         printf "legacy\n" > "$destination_fixture_root/manifests/integrity/remote/latest.txt"

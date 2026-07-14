@@ -1,20 +1,16 @@
 #!/bin/bash
 
 validate_config() {
-    load_config
-
+    load_config || return 1
     VALIDATION_FAILED=0
-
     section "PROJECT PHOENIX CONFIG VALIDATION"
 
     check_required() {
-        local name="$1"
-        local value="$2"
-
-        if [ -n "$value" ]; then
+        local name="$1" value="$2"
+        if transport_config_value_present "$value"; then
             log_success "$name is set"
         else
-            log_error "$name is missing"
+            log_error "$name is missing or unsafe"
             VALIDATION_FAILED=1
         fi
     }
@@ -22,10 +18,6 @@ validate_config() {
     check_required "PROJECT_NAME" "${PROJECT_NAME:-}"
     check_required "TAGLINE" "${TAGLINE:-}"
     check_required "SOURCE" "${SOURCE:-}"
-    check_required "DESTINATION" "${DESTINATION:-}"
-    check_required "BACKUP_HOST" "${BACKUP_HOST:-}"
-    check_required "BACKUP_USER" "${BACKUP_USER:-}"
-    check_required "SSH_KEY" "${SSH_KEY:-}"
     check_required "BACKUP_DIR" "${BACKUP_DIR:-}"
 
     if destination_id_valid "${DESTINATION_ID:-}"; then
@@ -40,14 +32,18 @@ validate_config() {
         log_error "DESTINATION_TRANSPORT is unsupported"
         VALIDATION_FAILED=1
     fi
+    if transport_call validate_config; then
+        log_success "$DESTINATION_TRANSPORT destination settings are valid"
+    else
+        log_error "$DESTINATION_TRANSPORT destination settings are invalid${LOCAL_PATH_ERROR:+: $LOCAL_PATH_ERROR}"
+        VALIDATION_FAILED=1
+    fi
 
     echo
-
     if [ "$VALIDATION_FAILED" -eq 0 ]; then
         log_success "Configuration is valid"
         return 0
-    else
-        log_error "Configuration needs attention"
-        return 1
     fi
+    log_error "Configuration needs attention"
+    return 1
 }

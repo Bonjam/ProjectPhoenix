@@ -72,6 +72,78 @@ integrity_generate_manifest() {
     rm -f -- "$records_file"
 }
 
+integrity_generate_destination_manifest() {
+    local source_directory="$1" output_file="$2" creation_timestamp="$3" reference_name="$4"
+    local entry file_hash file_size link_target relative_path
+    local regular_files=0 symbolic_links=0 total_bytes=0
+    local records_file="${output_file}.records"
+
+    : > "$records_file" || return 1
+    while IFS= read -r -d "" entry; do
+        relative_path="${entry#"${source_directory%/}"/}"
+        integrity_remote_path_selected "$relative_path" || continue
+        integrity_path_supported "$relative_path" || { rm -f -- "$records_file"; return 1; }
+        if [ -L "$entry" ]; then
+            link_target=$(readlink -- "$entry") || { rm -f -- "$records_file"; return 1; }
+            integrity_path_supported "$link_target" || { rm -f -- "$records_file"; return 1; }
+            printf "L\t%s\t%s\n" "$relative_path" "$link_target" >> "$records_file"
+            symbolic_links=$((symbolic_links + 1))
+        else
+            file_size=$(stat -c "%s" -- "$entry") || { rm -f -- "$records_file"; return 1; }
+            file_hash=$(sha256sum -- "$entry") || { rm -f -- "$records_file"; return 1; }
+            printf "F\t%s\t%s\t%s\n" "$relative_path" "$file_size" "${file_hash%% *}" >> "$records_file"
+            regular_files=$((regular_files + 1))
+            total_bytes=$((total_bytes + file_size))
+        fi
+    done < <(find "${source_directory%/}" -mindepth 1 \( -type f -o -type l \) -print0 2>/dev/null | LC_ALL=C sort -z)
+    {
+        echo "# project-phoenix-integrity"
+        echo "# format_version=1"
+        printf "# created_at=%s\n" "$creation_timestamp"
+        printf "# source=%s\n" "$(restore_normalize_directory "$source_directory")"
+        printf "# reference_file=%s\n" "$reference_name"
+        printf "# regular_files=%s\n" "$regular_files"
+        printf "# symbolic_links=%s\n" "$symbolic_links"
+        printf "# total_bytes=%s\n" "$total_bytes"
+        echo "# filename_limit=tabs and newlines are unsupported"
+        echo "--"
+        cat "$records_file"
+    } > "$output_file"
+    rm -f -- "$records_file"
+}
+
+integrity_publish_reference_directory() {
+    local source_manifest="$1" reference_name="$2" directory="$3"
+    local timestamped_target="$directory/$reference_name" latest_target="$directory/latest.txt"
+    local temporary
+    integrity_reference_name_safe "$reference_name" || return 1
+    [ ! -L "$directory" ] || return 1
+    mkdir -p -- "$directory" || return 1
+    if [ -e "$timestamped_target" ] || [ -L "$timestamped_target" ]; then
+        [ -f "$timestamped_target" ] && [ ! -L "$timestamped_target" ] &&
+            cmp -s -- "$source_manifest" "$timestamped_target" || return 1
+    else
+        temporary=$(mktemp "$directory/.integrity-reference.XXXXXX") || return 1
+        if cp -- "$source_manifest" "$temporary" &&
+            ln -- "$temporary" "$timestamped_target" 2>/dev/null; then
+            :
+        else
+            [ -f "$timestamped_target" ] && [ ! -L "$timestamped_target" ] &&
+                cmp -s -- "$source_manifest" "$timestamped_target" || return 1
+        fi
+        rm -f -- "$temporary"
+    fi
+    [ ! -L "$latest_target" ] || return 1
+    if [ -f "$latest_target" ] && cmp -s -- "$source_manifest" "$latest_target"; then return 0; fi
+    [ ! -d "$latest_target" ] || return 1
+    temporary=$(mktemp "$directory/.integrity-latest.XXXXXX") || return 1
+    if ! cp -- "$source_manifest" "$temporary" || ! mv -fT -- "$temporary" "$latest_target"; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+    [ -f "$latest_target" ] && [ ! -L "$latest_target" ] && cmp -s -- "$source_manifest" "$latest_target"
+}
+
 integrity_load_manifest() {
     local manifest_file="$1"
     local -n file_sizes_ref="$2" file_hashes_ref="$3" links_ref="$4"
@@ -299,7 +371,7 @@ cat "$manifest_file"
 REMOTE_FETCH
 }
 
-integrity_generate_remote_reference() {
+integrity_generate_remote_reference_ssh() {
     local local_manifest reference_name
     # shellcheck disable=SC2034 # Nameref outputs validate the downloaded manifest.
     local -A remote_file_sizes=() remote_file_hashes=() remote_links=()
@@ -385,6 +457,10 @@ REMOTE_INTEGRITY
     integrity_unregister_temp_cleanup
 }
 
+integrity_generate_remote_reference() {
+    transport_call generate_integrity_reference
+}
+
 run_integrity_create() {
     local integrity_directory manifest_file timestamp
     validate_config || return 1
@@ -449,7 +525,7 @@ run_integrity_verify_remote() {
 
 run_integrity_fetch_remote() {
     validate_config || return 1
-    section "PROJECT PHOENIX REMOTE INTEGRITY FETCH"
+    section "PROJECT PHOENIX DESTINATION INTEGRITY FETCH"
     integrity_manifest_root_safe "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" || {
         log_error "MANIFEST_DIR is empty, unsafe, or outside PROJECT_ROOT"
         return 1
@@ -458,20 +534,16 @@ run_integrity_fetch_remote() {
         log_error "Unable to prepare the destination manifest namespace"
         return 1
     }
-    ssh_key_exists "$SSH_KEY" || {
-        log_error "Configured SSH key file does not exist"
-        return 1
-    }
-    ssh_test_connection "$SSH_KEY" "$BACKUP_USER" "$BACKUP_HOST" accept-new || {
-        log_error "SSH connection failed"
+    transport_call integrity_fetch_preflight || {
+        log_error "Destination integrity fetch preflight failed"
         return 1
     }
     if ! integrity_fetch_with_downloader \
-        "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" integrity_download_remote_reference; then
+        "$DESTINATION_MANIFEST_DIR" "$PROJECT_ROOT" transport_download_integrity_reference; then
         log_error "Integrity fetch failed during: ${INTEGRITY_FETCH_ERROR_STAGE:-unknown stage}"
         return 1
     fi
-    log_success "Remote integrity reference fetched"
+    log_success "Destination integrity reference fetched"
     echo "Reference: $INTEGRITY_FETCHED_REFERENCE_NAME"
     echo "Latest   : $DESTINATION_INTEGRITY_REMOTE_DIR/latest.txt"
 }
