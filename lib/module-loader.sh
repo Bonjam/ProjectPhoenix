@@ -20,4 +20,10 @@ load_phoenix_modules() {
         # shellcheck source=/dev/null
         source "$transport_file"
     done
+
+    for source_file in "$PROJECT_ROOT"/lib/sources/*.sh; do
+        [ -f "$source_file" ] || continue
+        # shellcheck source=/dev/null
+        source "$source_file"
+    done
 }

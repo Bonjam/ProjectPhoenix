@@ -10,7 +10,7 @@ COMMAND="${1:-help}"
 
 phoenix_init_core
 case "$COMMAND" in
-    help|--help|-h|check-config|destination-info|destination-migration|destination-migrate|health|requirements|doctor|local-check) ;;
+    help|--help|-h|check-config|destination-info|source-info|source-check|destination-migration|destination-migrate|health|requirements|doctor|local-check) ;;
 
     *) phoenix_init_dirs ;;
 esac
@@ -40,6 +40,16 @@ case "$COMMAND" in
     destination-info)
         show_banner
         run_destination_info
+        ;;
+
+    source-info)
+        show_banner
+        run_source_info
+        ;;
+
+    source-check)
+        show_banner
+        run_source_check
         ;;
 
     destination-migration)

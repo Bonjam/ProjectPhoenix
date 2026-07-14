@@ -38,6 +38,8 @@ phoenix_print_usage() {
     echo "  phoenix.sh integrity-cleanup Confirm removal of old integrity manifests"
     echo "  phoenix.sh health          Run read-only end-to-end health checks"
     echo "  phoenix.sh destination-info Show the current destination profile"
+    echo "  phoenix.sh source-info      Show the current source profile"
+    echo "  phoenix.sh source-check     Check source access read-only"
     echo "  phoenix.sh local-check     Inspect a local destination read-only"
     echo "  phoenix.sh destination-migration Analyse legacy destination state"
     echo "  phoenix.sh destination-migrate Confirm copy-first legacy state migration"
